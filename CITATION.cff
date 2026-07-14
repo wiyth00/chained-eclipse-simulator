@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software or its generated results, please cite it."
+title: "Chained Eclipse Simulator"
+type: software
+authors:
+  - family-names: "Taylor"
+    given-names: "Joshua"
+    alias: "wiyth00"
+version: 0.1.0
+date-released: 2026-07-13
+url: "https://github.com/wiyth00/chained-eclipse-simulator"
+repository-code: "https://github.com/wiyth00/chained-eclipse-simulator"
+license: MIT
+keywords:
+  - solar eclipse
+  - celestial mechanics
+  - N-body simulation
+  - astronomical ephemeris

@@ -1,0 +1,73 @@
+schema_version: '1.0'
+model_version: 0.1.0
+mode: fixed-system
+model_boundary:
+  eclipse_search: restricted DE440s-forced real bodies; second moon has no back-reaction
+  stability: fully coupled Newtonian four-body REBOUND experiment
+orbital_elements:
+  semimajor_axis_km: 180000.0
+  eccentricity: 0.04
+  inclination_deg: 5.0
+  longitude_ascending_node_deg: 119.77473584004684
+  argument_periapsis_deg: 320.5405052727071
+  mean_anomaly_deg: 115.42496870324824
+  epoch_utc: '2026-07-10T00:00:00Z'
+  radius_km: 838.0
+  density_kg_m3: 3344.0
+  mass_kg: 8.243031015931671e+21
+  frame: mean_ecliptic_J2000
+epoch_state:
+  frame: Earth-centred ICRF/J2000
+  position_km:
+  - -171897.28882251206
+  - -62890.43994775979
+  - -10115.739485448263
+  velocity_km_s:
+  - 0.44650564510869684
+  - -1.2865295677550916
+  - -0.528878762744988
+mass_calculation:
+  formula: 4/3*pi*radius^3*density
+  mass_kg: 8.243031015931671e+21
+design_diagnostics:
+  design_degeneracy: Free orientation and phase make a conjunction constructively
+    feasible at the first real eclipse; the date is a design consequence, not a random
+    discovery.
+  target_gap_minutes: 12.0
+  analytic_seed:
+    semimajor_axis_km: 180000.0
+    eccentricity: 0.04
+    inclination_deg: 5.0
+    longitude_ascending_node_deg: 117.55414131586751
+    argument_periapsis_deg: 22.39578819994478
+    mean_anomaly_deg: 58.81484011043267
+    epoch_utc: '2026-07-10T00:00:00Z'
+    radius_km: 838.0
+    density_kg_m3: 3344.0
+    mass_kg: 8.243031015931671e+21
+    frame: mean_ecliptic_J2000
+  coarse_global:
+    objective_km: 0.06567764199393676
+    evaluations: 2856.0
+    success: false
+  analytic_two_body_error_km: 2.9546122101960576e-10
+  shooting:
+    success: true
+    shooting_calls: 38.0
+    target_position_error_km: 5.319066463907277e-07
+    cost: 3.423521569089595e-17
+    optimality: 3.125549597347903e-07
+  short_trajectory_metadata:
+    model: DE440s prescribed Sun/Moon + Earth monopole/J2
+    integrator: scipy DOP853
+    rtol: 3.0e-12
+    max_step_seconds: 1800.0
+    ephemeris_interpolation_hours: 0.9999576844274998
+    nfev: 24377
+  target_state_icrf_km_km_s:
+  - -132053.24870219943
+  - 99838.06849160328
+  - 49539.273143353246
+  - -1.0401401305081013
+  - -1.102249956270744
+  - -0.3394092183067234

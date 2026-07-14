@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chained-eclipse"
+version = "0.1.0"
+description = "Ephemeris-driven search for chained solar eclipses involving a hypothetical second moon"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
+authors = [{name = "Joshua Taylor"}]
+keywords = ["astronomy", "eclipse", "n-body", "skyfield", "rebound"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+  "astropy>=7.0",
+  "cartopy>=0.24",
+  "matplotlib>=3.9",
+  "numpy>=2.0",
+  "pandas>=2.2",
+  "pyyaml>=6.0",
+  "rebound>=4.6,<5.0",
+  "reboundx>=4.6,<5.0",
+  "scipy>=1.14",
+  "shapely>=2.0",
+  "skyfield>=1.49",
+]
+
+[project.urls]
+Homepage = "https://github.com/wiyth00/chained-eclipse-simulator"
+Repository = "https://github.com/wiyth00/chained-eclipse-simulator"
+Issues = "https://github.com/wiyth00/chained-eclipse-simulator/issues"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.9",
+]
+
+[project.scripts]
+chained-eclipse = "chained_eclipse.cli:main"
+chained-eclipse-animate = "chained_eclipse.animation:main"
+chained-eclipse-map-animate = "chained_eclipse.animation_2d:main"
+chained-eclipse-standalone = "chained_eclipse.standalone:main"
+chained-eclipse-ground-track = "chained_eclipse.standalone_map:main"
+chained-eclipse-total-tracks-2027 = "chained_eclipse.total_tracks_2027:main"
+chained-eclipse-eclipse4-atlanta = "chained_eclipse.eclipse4_atlanta:main"
+chained-eclipse-coupled = "chained_eclipse.coupled_eclipse:main"
+chained-eclipse-coupled-figures = "chained_eclipse.coupled_figures:main"
+chained-eclipse-lunar = "chained_eclipse.lunar_eclipse:main"
+chained-eclipse-orbits = "chained_eclipse.orbit_portrait:main"
+chained-eclipse-climate = "chained_eclipse.eclipse_climate:main"
+chained-eclipse-climate-tracks = "chained_eclipse.climate_tracks:main"
+chained-eclipse-enhanced-compare = "chained_eclipse.enhanced_comparison:main"
+chained-eclipse-enhanced-report = "chained_eclipse.enhanced_report:main"
+chained-eclipse-tidal-audit = "chained_eclipse.tides_spin:main"
+chained-eclipse-tide-visualization = "chained_eclipse.tide_visualization:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["chained_eclipse"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

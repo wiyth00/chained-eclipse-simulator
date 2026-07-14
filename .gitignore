@@ -1,0 +1,23 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Downloaded/generated scientific data. Empty cache directories remain in Git.
+data/ephemeris/*
+!data/ephemeris/.gitkeep
+data/trajectories/*
+!data/trajectories/.gitkeep
+
+# Full-resolution results and movies are published as GitHub Release assets.
+outputs/*
+!outputs/.gitkeep
+
+work/
