@@ -24,6 +24,7 @@ dependencies = [
   "matplotlib>=3.9",
   "numpy>=2.0",
   "pandas>=2.2",
+  "pyproj>=3.6",
   "pyyaml>=6.0",
   "rebound>=4.6,<5.0",
   "reboundx>=4.6,<5.0",
