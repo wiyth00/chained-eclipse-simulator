@@ -101,6 +101,20 @@ NASA_GSFC_REFERENCES: tuple[PublishedEclipseReference, ...] = (
             "SE2028Jan26Abeselm.html"
         ),
     ),
+    PublishedEclipseReference(
+        event_id="20311114_real",
+        eclipse_type="hybrid",
+        published_greatest_ut="2031-11-14T21:06:12.300",
+        published_greatest_tdt="2031-11-14T21:07:30.200",
+        published_delta_t_s=77.9,
+        latitude_deg=-0.633333333333,
+        longitude_deg=-137.63,
+        central_duration_s=68.3,
+        source_url=(
+            "https://eclipse.gsfc.nasa.gov/SEbeselm/SEbeselm2001/"
+            "SE2031Nov14Hbeselm.html"
+        ),
+    ),
 )
 
 
