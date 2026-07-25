@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
-from importlib.metadata import version as package_version
+from importlib.metadata import PackageNotFoundError, version as package_version
 import json
+import logging
 from pathlib import Path
+import sys
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -23,7 +25,7 @@ from .mapping import (
     plot_stability_elements,
     plot_world_tracks,
 )
-from .models import ChainedEvent, OrbitalElements
+from .models import ChainedEvent, OrbitalElements, RealEclipse
 from .optimize import optimize_earliest_design, screen_design_opportunities
 from .orbital_dynamics import elements_to_state, integrate_restricted
 from .report import build_report_artifact
@@ -36,10 +38,28 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "baseline.yaml"
 DEFAULT_OUTPUTS = ROOT / "outputs"
 
+LOGGER = logging.getLogger("chained_eclipse.cli")
+
+
+def _version_string() -> str:
+    try:
+        distribution = package_version("chained-eclipse")
+    except PackageNotFoundError:  # source tree without an installed distribution
+        distribution = "0+unknown"
+    # The kernel name mirrors load_ephemeris's default; a test pins the two.
+    return (
+        f"chained-eclipse {distribution} "
+        f"(model {MODEL_VERSION}, ephemeris kernel de440s.bsp)"
+    )
+
 
 def _json_dump(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _sha256(path: Path) -> str:
@@ -52,6 +72,54 @@ def _sha256(path: Path) -> str:
 
 def _load_config(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _resume_identity_mismatches(
+    manifest: dict[str, Any], identity: dict[str, str]
+) -> list[str]:
+    """Return human-readable reasons why a previous run cannot be resumed.
+
+    ``identity`` holds the current run's ``model_version``, ``config_sha256``,
+    and ``kernel_sha256``; a previous run is resumable only when the manifest
+    recorded exactly the same values for every key.
+    """
+
+    reasons: list[str] = []
+    for key, expected in identity.items():
+        recorded = manifest.get(key)
+        if recorded != expected:
+            reasons.append(f"{key}: recorded {recorded!r} does not match current {expected!r}")
+    return reasons
+
+
+def _load_resume_manifest(path: Path, identity: dict[str, str]) -> dict[str, Any] | None:
+    """Load and check the resume manifest; ``None`` means start fresh."""
+
+    if not path.exists():
+        LOGGER.info("No resume manifest at %s; starting a fresh run.", path)
+        return None
+    manifest = _read_json(path)
+    mismatches = _resume_identity_mismatches(manifest, identity)
+    if mismatches:
+        raise RuntimeError(
+            "--resume refused: the previous run in this output directory is "
+            "incompatible with the current model, configuration, or ephemeris "
+            "kernel (" + "; ".join(mismatches) + "). Re-run without --resume "
+            "or use a fresh --output directory."
+        )
+    return manifest
+
+
+def _write_resume_manifest(
+    path: Path,
+    identity: dict[str, str],
+    design_targets: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {"schema_version": "1.0", **identity}
+    payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+    if design_targets is not None:
+        payload["design_targets"] = design_targets
+    _json_dump(path, payload)
 
 
 def _baseline_elements(config: dict[str, Any]) -> OrbitalElements:
@@ -293,65 +361,136 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
     config = _load_config(config_path)
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    context = load_ephemeris(ROOT / config["model"]["ephemeris_cache"])
+    context = load_ephemeris(
+        ROOT / config["model"]["ephemeris_cache"],
+        allow_unverified=args.allow_unverified_ephemeris,
+    )
     start = context.time_utc(config["model"]["epoch_utc"])
     end_utc = args.end or config["model"]["end_utc"]
     end = context.time_utc(end_utc)
-    print("[1/7] Enumerating and independently verifying real-Moon eclipses…", flush=True)
-    real_eclipses = enumerate_real_solar_eclipses(context, start, end)
-    pd.DataFrame([event.to_dict() for event in real_eclipses]).to_csv(
-        output / "real_moon_eclipses.csv", index=False
+
+    identity = {
+        "model_version": MODEL_VERSION,
+        "config_sha256": _sha256(config_path),
+        "kernel_sha256": context.kernel_sha256,
+    }
+    resume_manifest_path = output / "resume_manifest.json"
+    resume_manifest = (
+        _load_resume_manifest(resume_manifest_path, identity) if args.resume else None
     )
-    _json_dump(output / "real_moon_eclipses.json", [event.to_dict() for event in real_eclipses])
+    stages_reused: list[str] = []
+
+    real_json_path = output / "real_moon_eclipses.json"
+    opportunities_json_path = output / "design_mode_opportunities.json"
     baseline = _baseline_elements(config)
-    design_opportunities = screen_design_opportunities(
-        context,
-        real_eclipses,
-        baseline,
-        target_gap_minutes=float(config["optimization"]["design_totality_gap_minutes"]),
-    )
-    _json_dump(output / "design_mode_opportunities.json", design_opportunities)
-    pd.DataFrame(design_opportunities).to_csv(
-        output / "design_mode_opportunities.csv", index=False
-    )
+    if resume_manifest and real_json_path.exists() and opportunities_json_path.exists():
+        LOGGER.info("[1/7] Reusing enumerated real-Moon eclipses from the previous run…")
+        real_eclipses = [RealEclipse(**item) for item in _read_json(real_json_path)]
+        design_opportunities = _read_json(opportunities_json_path)
+        stages_reused.append("enumeration_and_screening")
+    else:
+        LOGGER.info("[1/7] Enumerating and independently verifying real-Moon eclipses…")
+        real_eclipses = enumerate_real_solar_eclipses(context, start, end)
+        pd.DataFrame([event.to_dict() for event in real_eclipses]).to_csv(
+            output / "real_moon_eclipses.csv", index=False
+        )
+        _json_dump(real_json_path, [event.to_dict() for event in real_eclipses])
+        design_opportunities = screen_design_opportunities(
+            context,
+            real_eclipses,
+            baseline,
+            target_gap_minutes=float(config["optimization"]["design_totality_gap_minutes"]),
+        )
+        _json_dump(opportunities_json_path, design_opportunities)
+        pd.DataFrame(design_opportunities).to_csv(
+            output / "design_mode_opportunities.csv", index=False
+        )
+        _write_resume_manifest(resume_manifest_path, identity)
 
-    print("[2/7] Validating against NASA/GSFC reference eclipses…", flush=True)
-    validation = build_validation_report(context)
-    _json_dump(output / "validation_report.json", validation)
-    pd.DataFrame(
-        [
-            {
-                "event": item["reference"]["event_id"],
-                "type": item["model_eclipse_type"],
-                "time_error_tt_s": item["timing_error_tt_s"],
-                "position_error_wgs84_km": item["coordinate_error_wgs84_km"],
-                "duration_error_s": item["central_duration_error_s"],
-                "source_url": item["reference"]["source_url"],
-            }
-            for item in validation["results"]
-        ]
-    ).to_csv(output / "validation_results.csv", index=False)
+    validation_json_path = output / "validation_report.json"
+    if resume_manifest and validation_json_path.exists():
+        LOGGER.info("[2/7] Reusing the NASA/GSFC validation report from the previous run…")
+        validation = _read_json(validation_json_path)
+        stages_reused.append("validation")
+    else:
+        LOGGER.info("[2/7] Validating against NASA/GSFC reference eclipses…")
+        validation = build_validation_report(context)
+        _json_dump(validation_json_path, validation)
+        pd.DataFrame(
+            [
+                {
+                    "event": item["reference"]["event_id"],
+                    "type": item["model_eclipse_type"],
+                    "time_error_tt_s": item["timing_error_tt_s"],
+                    "position_error_wgs84_km": item["coordinate_error_wgs84_km"],
+                    "duration_error_s": item["central_duration_error_s"],
+                    "source_url": item["reference"]["source_url"],
+                }
+                for item in validation["results"]
+            ]
+        ).to_csv(output / "validation_results.csv", index=False)
 
-    print("[3/7] Optimizing the earliest design-mode chain…", flush=True)
-    design = optimize_earliest_design(
-        context,
-        real_eclipses,
-        baseline,
-        target_gap_minutes=float(config["optimization"]["design_totality_gap_minutes"]),
-        run_global_search=not args.no_global,
-        random_seed=int(config["optimization"]["random_seed"]),
-    )
-    design_event, _, _ = design_mode_event(context, design)
     optimized_path = output / "optimized_system.yaml"
-    _save_optimized_config(optimized_path, design.optimized_elements, design.diagnostics)
-    # Mirror the requested project-level configuration path.
-    _save_optimized_config(ROOT / "config" / "optimized_system.yaml", design.optimized_elements, design.diagnostics)
-    _json_dump(output / "design_mode_event.json", design_event.to_dict())
+    design_event_json_path = output / "design_mode_event.json"
+    recorded_targets = (resume_manifest or {}).get("design_targets") or {}
+    target_keys = (
+        "target_second_maximum_tt_jd",
+        "target_latitude_deg",
+        "target_longitude_deg",
+    )
+    if (
+        resume_manifest
+        and all(key in recorded_targets for key in target_keys)
+        and optimized_path.exists()
+        and design_event_json_path.exists()
+    ):
+        LOGGER.info("[3/7] Reusing the optimized design-mode chain from the previous run…")
+        optimized_elements = _load_optimized_elements(optimized_path)
+        design_event_dict = _read_json(design_event_json_path)
+        target_second_maximum_tt_jd = float(recorded_targets["target_second_maximum_tt_jd"])
+        target_latitude_deg = float(recorded_targets["target_latitude_deg"])
+        target_longitude_deg = float(recorded_targets["target_longitude_deg"])
+        stages_reused.append("design_optimization")
+    else:
+        LOGGER.info("[3/7] Optimizing the earliest design-mode chain…")
+        design = optimize_earliest_design(
+            context,
+            real_eclipses,
+            baseline,
+            target_gap_minutes=float(config["optimization"]["design_totality_gap_minutes"]),
+            run_global_search=not args.no_global,
+            random_seed=int(config["optimization"]["random_seed"]),
+        )
+        design_event, _, _ = design_mode_event(context, design)
+        optimized_elements = design.optimized_elements
+        design_event_dict = design_event.to_dict()
+        target_second_maximum_tt_jd = float(design.target_second_maximum_tt_jd)
+        target_latitude_deg = float(design.target_latitude_deg)
+        target_longitude_deg = float(design.target_longitude_deg)
+        _save_optimized_config(optimized_path, optimized_elements, design.diagnostics)
+        # Mirror the requested project-level configuration path.
+        _save_optimized_config(
+            ROOT / "config" / "optimized_system.yaml",
+            optimized_elements,
+            design.diagnostics,
+        )
+        _json_dump(design_event_json_path, design_event_dict)
+    _write_resume_manifest(
+        resume_manifest_path,
+        identity,
+        design_targets={
+            "target_second_maximum_tt_jd": target_second_maximum_tt_jd,
+            "target_latitude_deg": target_latitude_deg,
+            "target_longitude_deg": target_longitude_deg,
+        },
+    )
 
-    print("[4/7] Propagating the fixed system and searching through 2100…", flush=True)
+    # Stage 4 is never checkpointed: fixed-system ground tracks are not
+    # serialized, and the figure stage needs them alongside the events.
+    LOGGER.info("[4/7] Propagating the fixed system and searching through 2100…")
     fixed_trajectory = integrate_restricted(
         context,
-        design.optimized_elements,
+        optimized_elements,
         float(end.tt),
         rtol=1e-10,
         max_step_seconds=10_800.0,
@@ -365,31 +504,42 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
     pd.DataFrame(rows).to_csv(output / "all_candidates.csv", index=False)
     pd.DataFrame(rows[:10]).to_csv(output / "ranked_top10.csv", index=False)
 
-    print("[5/7] Running the 1,000-year coupled REBOUND stability check…", flush=True)
-    sample_days = args.stability_years * 365.25 / 500.0
-    stability_result = run_stability_check(
-        context,
-        design.optimized_elements,
-        config=StabilityConfig(
-            years=args.stability_years,
-            sample_interval_days=sample_days,
-            ias15_epsilon=1e-10,
-        ),
-    )
-    stability = stability_result.to_dict()
-    _json_dump(output / "stability.json", stability)
-    if not stability_result.stable:
-        raise RuntimeError(
-            f"optimized configuration failed stability: {stability_result.termination_reason}"
+    stability_json_path = output / "stability.json"
+    if resume_manifest and stability_json_path.exists():
+        LOGGER.info("[5/7] Reusing the coupled REBOUND stability result from the previous run…")
+        stability = _read_json(stability_json_path)
+        stages_reused.append("stability")
+        if not stability.get("stable", False):
+            raise RuntimeError(
+                "optimized configuration failed stability: "
+                f"{stability.get('termination_reason')}"
+            )
+    else:
+        LOGGER.info("[5/7] Running the 1,000-year coupled REBOUND stability check…")
+        sample_days = args.stability_years * 365.25 / 500.0
+        stability_result = run_stability_check(
+            context,
+            optimized_elements,
+            config=StabilityConfig(
+                years=args.stability_years,
+                sample_interval_days=sample_days,
+                ias15_epsilon=1e-10,
+            ),
         )
+        stability = stability_result.to_dict()
+        _json_dump(stability_json_path, stability)
+        if not stability_result.stable:
+            raise RuntimeError(
+                f"optimized configuration failed stability: {stability_result.termination_reason}"
+            )
 
-    print("[6/7] Measuring sensitivity and rendering maps/diagnostic figures…", flush=True)
+    LOGGER.info("[6/7] Measuring sensitivity and rendering maps/diagnostic figures…")
     sensitivity = run_sensitivity_analysis(
         context,
-        design.optimized_elements,
-        design.target_second_maximum_tt_jd,
-        design.target_latitude_deg,
-        design.target_longitude_deg,
+        optimized_elements,
+        target_second_maximum_tt_jd,
+        target_latitude_deg,
+        target_longitude_deg,
     )
     _json_dump(output / "sensitivity.json", sensitivity)
     figure_index: dict[str, Any] = {"events": {}}
@@ -406,20 +556,21 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "ephemeris": {
             "kernel": context.kernel_path.name,
-            "sha256": _sha256(context.kernel_path),
+            "sha256": context.kernel_sha256,
+            "verified": context.kernel_verified,
             "path": str(context.kernel_path),
         },
         "model_boundary": {
             "search": "restricted DE440s-forced dynamics",
             "stability": "fully coupled Newtonian four-body dynamics",
         },
-        "optimized_elements": design.optimized_elements.to_dict(),
+        "optimized_elements": optimized_elements.to_dict(),
         "design_mode_opportunities": {
             "screened": len(design_opportunities),
             "feasible": sum(bool(item["feasible"]) for item in design_opportunities),
             "artifact": "design_mode_opportunities.json",
         },
-        "design_mode": design_event.to_dict(),
+        "design_mode": design_event_dict,
         "fixed_system_events": [event.to_dict() for event in fixed_events],
         "validation": validation,
         "sensitivity": sensitivity,
@@ -443,8 +594,13 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
             "model_version": MODEL_VERSION,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "python_required": ">=3.12",
-            "command": "MPLBACKEND=Agg .venv/bin/python run_search.py --mode full",
+            "command": "MPLBACKEND=Agg chained-eclipse --mode full",
             "ephemeris_sha256": events_payload["ephemeris"]["sha256"],
+            "ephemeris_verified": context.kernel_verified,
+            "resume": {
+                "requested": bool(args.resume),
+                "stages_reused": stages_reused,
+            },
             "counts": {
                 "real_eclipses": len(real_eclipses),
                 "design_opportunities_screened": len(design_opportunities),
@@ -467,7 +623,7 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         },
     )
 
-    print("[7/7] Building and verifying the self-contained HTML technical report…", flush=True)
+    LOGGER.info("[7/7] Building and verifying the self-contained HTML technical report…")
     assumptions = [
         "The search forces the real Sun, Earth, and Moon to DE440s and suppresses second-moon back-reaction.",
         "The hypothetical moon is a smooth sphere; its roughly 0.6 s light time is iterated once, but synthetic aberration is omitted.",
@@ -498,7 +654,7 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         + f"Report: {report_path.name}\n"
     )
     (output / "terminal_summary.txt").write_text(summary, encoding="utf-8")
-    print("\n" + summary, flush=True)
+    LOGGER.info("\n%s", summary)
     return {
         "headline": headline,
         "event_count": len(fixed_events),
@@ -510,7 +666,10 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
 
 def run_validate(args: argparse.Namespace) -> None:
     config = _load_config(Path(args.config))
-    context = load_ephemeris(ROOT / config["model"]["ephemeris_cache"])
+    context = load_ephemeris(
+        ROOT / config["model"]["ephemeris_cache"],
+        allow_unverified=args.allow_unverified_ephemeris,
+    )
     report = build_validation_report(context)
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -522,7 +681,10 @@ def run_design_only(args: argparse.Namespace) -> None:
     config = _load_config(Path(args.config))
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    context = load_ephemeris(ROOT / config["model"]["ephemeris_cache"])
+    context = load_ephemeris(
+        ROOT / config["model"]["ephemeris_cache"],
+        allow_unverified=args.allow_unverified_ephemeris,
+    )
     start = context.time_utc(config["model"]["epoch_utc"])
     end = context.time_utc(args.end or config["model"]["end_utc"])
     real_eclipses = enumerate_real_solar_eclipses(context, start, end)
@@ -562,7 +724,10 @@ def run_fixed_only(args: argparse.Namespace) -> None:
     config = _load_config(Path(args.config))
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    context = load_ephemeris(ROOT / config["model"]["ephemeris_cache"])
+    context = load_ephemeris(
+        ROOT / config["model"]["ephemeris_cache"],
+        allow_unverified=args.allow_unverified_ephemeris,
+    )
     start = context.time_utc(config["model"]["epoch_utc"])
     end = context.time_utc(args.end or config["model"]["end_utc"])
     optimized = output / "optimized_system.yaml"
@@ -589,7 +754,10 @@ def run_fixed_only(args: argparse.Namespace) -> None:
 
 def run_stability_only(args: argparse.Namespace) -> None:
     config = _load_config(Path(args.config))
-    context = load_ephemeris(ROOT / config["model"]["ephemeris_cache"])
+    context = load_ephemeris(
+        ROOT / config["model"]["ephemeris_cache"],
+        allow_unverified=args.allow_unverified_ephemeris,
+    )
     optimized = Path(args.output).resolve() / "optimized_system.yaml"
     if not optimized.exists():
         optimized = ROOT / "config" / "optimized_system.yaml"
@@ -608,6 +776,7 @@ def run_stability_only(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", action="version", version=_version_string())
     parser.add_argument(
         "--mode",
         choices=("full", "validate", "design", "fixed", "stability"),
@@ -619,11 +788,38 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stability-years", type=float, default=1_000.0)
     parser.add_argument("--max-maps", type=int, default=10)
     parser.add_argument("--no-global", action="store_true", help="skip the coarse DE check")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "full mode only: reuse per-stage artifacts already in --output when the "
+            "recorded model version, config hash, and ephemeris kernel hash all match"
+        ),
+    )
+    parser.add_argument(
+        "--allow-unverified-ephemeris",
+        action="store_true",
+        help="proceed even if the ephemeris kernel fails its SHA-256 integrity check",
+    )
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--quiet", action="store_true", help="log warnings and errors only"
+    )
+    verbosity.add_argument(
+        "--verbose", action="store_true", help="log debug-level progress"
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    if args.quiet:
+        level = logging.WARNING
+    elif args.verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+    logging.basicConfig(level=level, format="%(message)s", stream=sys.stdout)
     if args.mode == "validate":
         run_validate(args)
     elif args.mode == "design":
