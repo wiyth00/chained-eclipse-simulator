@@ -640,6 +640,12 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         outputs_dir=output,
         assumptions=assumptions,
     )
+    central_path_errors = [
+        item["coordinate_error_wgs84_km"]
+        for item in validation["results"]
+        # Timing-only (non-central) references publish no coordinates.
+        if item["coordinate_error_wgs84_km"] is not None
+    ]
     headline = _headline(fixed_events[0])
     summary = (
         headline
@@ -647,7 +653,7 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         + f"Definitions: A={fixed_events[0].definition_a}; B={fixed_events[0].definition_b}; "
         + f"two separate totality intervals={fixed_events[0].two_totality_components}.\n"
         + f"Validation: max timing error {max(item['timing_error_tt_s'] for item in validation['results']):.3f} s; "
-        + f"max path error {max(item['coordinate_error_wgs84_km'] for item in validation['results']):.3f} km.\n"
+        + f"max path error {max(central_path_errors):.3f} km.\n"
         + f"Stability: {stability['stable']} for {stability['integrated_years']:.0f} years; "
         + f"minimum moon-moon distance {stability['min_moon_moon_distance_km']:.1f} km.\n"
         + f"Fixed-system qualifying events through 2100: {len(fixed_events)}.\n"

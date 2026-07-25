@@ -5,6 +5,11 @@ renamed Terrestrial Time (TT), so model/reference timing is compared in TT.
 The pages also publish a future ``UT`` prediction derived from an assumed
 Delta-T.  That value is retained in the output, but is not silently treated as
 UTC: future UT1, leap seconds, and therefore UTC labels are not known exactly.
+
+Non-central (partial) eclipses have no central line, so NASA publishes no
+greatest-eclipse coordinates or central duration for them.  Such references
+store ``None`` for those fields and are validated on eclipse type and TT
+timing only.
 """
 
 from __future__ import annotations
@@ -28,16 +33,22 @@ _WGS84_GEOD = Geod(ellps="WGS84")
 
 @dataclass(frozen=True, slots=True)
 class PublishedEclipseReference:
-    """Published circumstances at NASA's point of greatest eclipse."""
+    """Published circumstances at NASA's point of greatest eclipse.
+
+    ``latitude_deg``, ``longitude_deg``, and ``central_duration_s`` are
+    ``None`` for non-central (partial) eclipses: NASA publishes no
+    greatest-eclipse coordinates or central duration for those, so they are
+    validated on eclipse type and TT timing only.
+    """
 
     event_id: str
     eclipse_type: str
     published_greatest_ut: str
     published_greatest_tdt: str
     published_delta_t_s: float
-    latitude_deg: float
-    longitude_deg: float
-    central_duration_s: float
+    latitude_deg: float | None
+    longitude_deg: float | None
+    central_duration_s: float | None
     source_url: str
     source_ephemeris: str = "VSOP87/ELP2000-85"
     coordinate_reference: str = "WGS84 geodetic, NASA central-path convention"
@@ -48,6 +59,36 @@ class PublishedEclipseReference:
 
 
 NASA_GSFC_REFERENCES: tuple[PublishedEclipseReference, ...] = (
+    PublishedEclipseReference(
+        event_id="20240408_real",
+        eclipse_type="total",
+        published_greatest_ut="2024-04-08T18:17:18.300",
+        published_greatest_tdt="2024-04-08T18:18:29.000",
+        # NASA's page states Delta-T = 70.6 s while its own TDT/UT pair
+        # differs by 70.7 s; both values are quoted verbatim from the source.
+        published_delta_t_s=70.6,
+        latitude_deg=25.286666666667,
+        longitude_deg=-104.138333333333,
+        central_duration_s=268.1,
+        source_url=(
+            "https://eclipse.gsfc.nasa.gov/SEbeselm/SEbeselm2001/"
+            "SE2024Apr08Tbeselm.html"
+        ),
+    ),
+    PublishedEclipseReference(
+        event_id="20250329_real",
+        eclipse_type="partial",
+        published_greatest_ut="2025-03-29T10:47:24.700",
+        published_greatest_tdt="2025-03-29T10:48:35.700",
+        published_delta_t_s=71.0,
+        latitude_deg=None,
+        longitude_deg=None,
+        central_duration_s=None,
+        source_url=(
+            "https://eclipse.gsfc.nasa.gov/SEbeselm/SEbeselm2001/"
+            "SE2025Mar29Pbeselm.html"
+        ),
+    ),
     PublishedEclipseReference(
         event_id="20260812_real",
         eclipse_type="total",
@@ -123,23 +164,28 @@ NASA_GSFC_REFERENCES: tuple[PublishedEclipseReference, ...] = (
 
 @dataclass(frozen=True, slots=True)
 class EclipseValidationResult:
-    """One DE440s result compared with one published NASA circumstance."""
+    """One DE440s result compared with one published NASA circumstance.
+
+    Coordinate and duration fields are ``None`` for timing-only (non-central)
+    references, and ``coordinate_within_target`` is ``None`` there; ``passed``
+    then rests on eclipse type and TT timing alone.
+    """
 
     reference: PublishedEclipseReference
     model_eclipse_type: str
     model_maximum_utc: str
     model_maximum_tt: str
-    model_latitude_deg: float
-    model_longitude_deg: float
+    model_latitude_deg: float | None
+    model_longitude_deg: float | None
     signed_timing_error_tt_s: float
     timing_error_tt_s: float
-    coordinate_error_wgs84_km: float
-    model_central_duration_s: float
-    central_duration_error_s: float
+    coordinate_error_wgs84_km: float | None
+    model_central_duration_s: float | None
+    central_duration_error_s: float | None
     nominal_utc_minus_published_ut_s: float
     type_matches: bool
     timing_within_target: bool
-    coordinate_within_target: bool
+    coordinate_within_target: bool | None
     passed: bool
     model_source: str
 
@@ -205,7 +251,8 @@ def _validate_one(
     reference: PublishedEclipseReference,
     event: RealEclipse,
 ) -> EclipseValidationResult:
-    if event.latitude_deg is None or event.longitude_deg is None:
+    timing_only = reference.latitude_deg is None or reference.longitude_deg is None
+    if not timing_only and (event.latitude_deg is None or event.longitude_deg is None):
         raise ValueError(f"{event.event_id} was not classified as a central eclipse")
 
     model_time = context.time_utc(event.maximum_utc)
@@ -213,21 +260,31 @@ def _validate_one(
     signed_timing_error = float(
         (float(model_time.tt) - float(published_tt.tt)) * SECONDS_PER_DAY
     )
-    coordinate_error = wgs84_geodesic_distance_km(
-        reference.latitude_deg,
-        reference.longitude_deg,
-        event.latitude_deg,
-        event.longitude_deg,
-    )
-    local = solve_local_circumstances(
-        context,
-        float(model_time.tt),
-        reference.latitude_deg,
-        reference.longitude_deg,
-        "real_moon",
-        bracket_step_seconds=30.0,
-    )
-    duration_error = local.central_duration_s - reference.central_duration_s
+    if timing_only:
+        coordinate_error = None
+        model_duration = None
+        duration_error = None
+    else:
+        coordinate_error = wgs84_geodesic_distance_km(
+            reference.latitude_deg,
+            reference.longitude_deg,
+            event.latitude_deg,
+            event.longitude_deg,
+        )
+        local = solve_local_circumstances(
+            context,
+            float(model_time.tt),
+            reference.latitude_deg,
+            reference.longitude_deg,
+            "real_moon",
+            bracket_step_seconds=30.0,
+        )
+        model_duration = local.central_duration_s
+        duration_error = (
+            model_duration - reference.central_duration_s
+            if reference.central_duration_s is not None
+            else None
+        )
     model_utc = datetime.fromisoformat(event.maximum_utc.replace("Z", "+00:00"))
     nominal_published_ut = _parse_published_time(reference.published_greatest_ut).replace(
         tzinfo=timezone.utc
@@ -235,8 +292,14 @@ def _validate_one(
     nominal_utc_minus_ut = (model_utc - nominal_published_ut).total_seconds()
     type_matches = event.eclipse_type == reference.eclipse_type
     timing_within_target = abs(signed_timing_error) < TIMING_TARGET_SECONDS
-    coordinate_within_target = coordinate_error < POSITION_TARGET_KM
-    passed = type_matches and timing_within_target and coordinate_within_target
+    coordinate_within_target = (
+        None if coordinate_error is None else coordinate_error < POSITION_TARGET_KM
+    )
+    passed = (
+        type_matches
+        and timing_within_target
+        and coordinate_within_target is not False
+    )
     return EclipseValidationResult(
         reference=reference,
         model_eclipse_type=event.eclipse_type,
@@ -247,7 +310,7 @@ def _validate_one(
         signed_timing_error_tt_s=signed_timing_error,
         timing_error_tt_s=abs(signed_timing_error),
         coordinate_error_wgs84_km=coordinate_error,
-        model_central_duration_s=local.central_duration_s,
+        model_central_duration_s=model_duration,
         central_duration_error_s=duration_error,
         nominal_utc_minus_published_ut_s=nominal_utc_minus_ut,
         type_matches=type_matches,
@@ -298,6 +361,11 @@ def build_validation_report(
         "published_ut_note": (
             "NASA's published UT is a future UT1 prediction based on its listed Delta-T. "
             "The model UTC label is reported but UTC-versus-UT is not the timing pass/fail basis."
+        ),
+        "non_central_reference_note": (
+            "NASA publishes no greatest-eclipse coordinates or central duration for "
+            "non-central (partial) eclipses; those references are validated on "
+            "eclipse type and TT timing only."
         ),
         "targets": {
             "maximum_eclipse_timing_error_tt_s": TIMING_TARGET_SECONDS,
