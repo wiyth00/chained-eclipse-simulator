@@ -33,7 +33,7 @@ class OrbitalElements:
     customize the radius or density but leave ``mass_kg`` at the package
     default, the mass is recalculated to keep the physical parameters
     internally consistent. An explicitly supplied non-default mass is retained
-    for callers modelling a body whose mass is independently constrained.
+    for independently constrained bodies and massless control integrations.
     """
 
     semimajor_axis_km: float = 180_000.0
@@ -56,8 +56,8 @@ class OrbitalElements:
         )
         if uses_custom_bulk_properties and self.mass_kg == SECOND_MOON_MASS_KG:
             self.mass_kg = derived_mass
-        elif not math.isfinite(self.mass_kg) or self.mass_kg <= 0.0:
-            raise ValueError("mass_kg must be a finite positive value")
+        elif not math.isfinite(self.mass_kg) or self.mass_kg < 0.0:
+            raise ValueError("mass_kg must be a finite non-negative value")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

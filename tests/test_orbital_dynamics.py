@@ -36,6 +36,12 @@ def test_explicit_independently_constrained_mass_is_retained() -> None:
     assert elements.mass_kg == 9.0e21
 
 
+def test_massless_control_is_retained() -> None:
+    elements = OrbitalElements(mass_kg=0.0)
+
+    assert elements.mass_kg == 0.0
+
+
 @pytest.mark.parametrize(
     ("radius_km", "density_kg_m3"),
     [
@@ -56,7 +62,7 @@ def test_invalid_bulk_properties_are_rejected(
 
 def test_invalid_explicit_mass_is_rejected() -> None:
     with pytest.raises(ValueError, match="mass_kg"):
-        OrbitalElements(mass_kg=0.0)
+        OrbitalElements(mass_kg=-1.0)
 
 
 def test_element_state_round_trip() -> None:
