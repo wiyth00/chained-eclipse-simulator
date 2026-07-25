@@ -310,14 +310,19 @@ def fixed_system_search(
     for real_event in real_eclipses:
         real_tt = float(context.time_utc(real_event.maximum_utc).tt)
         second_events = find_hypothetical_eclipses_near(context, trajectory, real_tt)
+        if not second_events:
+            continue
+        # The real-Moon centerline depends only on `real_tt`, so it is identical for
+        # every second-moon candidate of this eclipse. Build it once per real event
+        # rather than once per candidate. Downstream consumers treat it as read-only.
+        real_track = generate_central_track(
+            context,
+            real_tt,
+            "real_moon",
+            step_seconds=120.0,
+            include_partial_maximum=True,
+        )
         for second_event in second_events:
-            real_track = generate_central_track(
-                context,
-                real_tt,
-                "real_moon",
-                step_seconds=120.0,
-                include_partial_maximum=True,
-            )
             second_track = generate_central_track(
                 context,
                 second_event.maximum_tt_jd,
