@@ -3,6 +3,19 @@
 Contributions that improve numerical validation, physical modeling,
 performance, documentation, or reproducibility are welcome.
 
+## Install
+
+This project uses [uv](https://docs.astral.sh/uv/) and a committed `uv.lock` as
+its single source of truth for dependencies. There is no `requirements.txt`.
+
+```bash
+uv sync --all-extras
+```
+
+CI installs with `uv sync --all-extras --no-editable`, which is also what a
+`pip install chained-eclipse` user effectively gets. Prefer `--no-editable`
+locally when reproducing a CI failure.
+
 ## Development setup
 
 ```bash
