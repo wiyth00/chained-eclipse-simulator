@@ -324,6 +324,39 @@ def central_point_real(
     return lat, lon, height, float(signed_radius)
 
 
+def _classify_central_eclipse(
+    context: EphemerisContext,
+    greatest_tt_jd: float,
+    near_core_radius_km: float,
+    *,
+    half_window_seconds: float = 10_800.0,
+    step_seconds: float = 120.0,
+) -> str:
+    """Classify a central eclipse as ``total``, ``annular``, or ``hybrid``.
+
+    The signed near-side core radius is sampled along the whole central track
+    (off-ellipsoid samples are skipped by ``iter_real_track``).  If the radius
+    takes both signs anywhere on the track, the eclipse transitions between
+    annular and total and is labelled ``hybrid`` (annular-total), matching
+    NASA/GSFC catalog conventions.  Otherwise the sign at greatest eclipse
+    decides between ``total`` and ``annular``, exactly as before.
+    """
+
+    saw_total = near_core_radius_km > 0.0
+    saw_annular = near_core_radius_km < 0.0
+    offsets = np.arange(
+        -half_window_seconds, half_window_seconds + step_seconds, step_seconds
+    )
+    for _, _, _, core in iter_real_track(context, greatest_tt_jd, offsets):
+        if core > 0.0:
+            saw_total = True
+        elif core < 0.0:
+            saw_annular = True
+        if saw_total and saw_annular:
+            return "hybrid"
+    return "total" if near_core_radius_km > 0.0 else "annular"
+
+
 def enumerate_real_solar_eclipses(
     context: EphemerisContext,
     start: Time,
@@ -393,7 +426,9 @@ def enumerate_real_solar_eclipses(
             )
         else:
             lat, lon, altitude, near_core_radius = central
-            kind = "total" if near_core_radius > 0.0 else "annular"
+            kind = _classify_central_eclipse(
+                context, float(maximum.tt), near_core_radius
+            )
             core_margin = abs(near_core_radius)
         event_id = maximum.utc_strftime("%Y%m%d") + "_real"
         events.append(
