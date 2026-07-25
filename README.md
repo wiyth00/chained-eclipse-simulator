@@ -52,7 +52,7 @@ validation status, limitations, and release artifacts.
 
 ```bash
 uv sync --all-extras --no-editable
-.venv/bin/python run_search.py --mode full
+uv run chained-eclipse --mode full
 ```
 
 The first run downloads `de440s.bsp` into `data/ephemeris/`.  Results are
@@ -68,16 +68,16 @@ reference movies and executed-run bundle are attached to the
 
 ```bash
 # Validate the real-Moon model against NASA/GSFC reference circumstances.
-.venv/bin/python run_search.py --mode validate
+.venv/bin/chained-eclipse --mode validate
 
 # Design the earliest deliberately aligned configuration.
-.venv/bin/python run_search.py --mode design
+.venv/bin/chained-eclipse --mode design
 
 # Propagate the saved configuration without redesigning it per eclipse.
-.venv/bin/python run_search.py --mode fixed
+.venv/bin/chained-eclipse --mode fixed
 
 # Run the 1,000-year coupled stability experiment.
-.venv/bin/python run_search.py --mode stability
+.venv/bin/chained-eclipse --mode stability
 
 # Render the solved 2026 event as a two-scale 3-D H.264 movie.
 .venv/bin/python -m chained_eclipse.animation \
@@ -139,6 +139,9 @@ topocentric circumstances:
 ```bash
 .venv/bin/python -m chained_eclipse.eclipse4_atlanta
 ```
+
+These two one-off analyses are intentionally not installed as console
+scripts; run them with `python -m` as shown.
 
 Run the unit and reference tests with:
 
