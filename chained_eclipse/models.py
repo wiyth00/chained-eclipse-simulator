@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
@@ -14,11 +15,25 @@ from .constants import (
 )
 
 
+def spherical_mass_kg(radius_km: float, density_kg_m3: float) -> float:
+    """Return the mass of a spherical body from its radius and bulk density."""
+
+    if not math.isfinite(radius_km) or radius_km <= 0.0:
+        raise ValueError("radius_km must be a finite positive value")
+    if not math.isfinite(density_kg_m3) or density_kg_m3 <= 0.0:
+        raise ValueError("density_kg_m3 must be a finite positive value")
+    return 4.0 / 3.0 * math.pi * (radius_km * 1_000.0) ** 3 * density_kg_m3
+
+
 @dataclass(slots=True)
 class OrbitalElements:
     """Osculating Earth-centred elements at the configured epoch.
 
-    Angular fields are degrees in the mean J2000 ecliptic frame.
+    Angular fields are degrees in the mean J2000 ecliptic frame. When callers
+    customize the radius or density but leave ``mass_kg`` at the package
+    default, the mass is recalculated to keep the physical parameters
+    internally consistent. An explicitly supplied non-default mass is retained
+    for independently constrained bodies and massless control integrations.
     """
 
     semimajor_axis_km: float = 180_000.0
@@ -32,6 +47,17 @@ class OrbitalElements:
     density_kg_m3: float = SECOND_MOON_DENSITY_KG_M3
     mass_kg: float = SECOND_MOON_MASS_KG
     frame: str = "mean_ecliptic_J2000"
+
+    def __post_init__(self) -> None:
+        derived_mass = spherical_mass_kg(self.radius_km, self.density_kg_m3)
+        uses_custom_bulk_properties = (
+            self.radius_km != SECOND_MOON_RADIUS_KM
+            or self.density_kg_m3 != SECOND_MOON_DENSITY_KG_M3
+        )
+        if uses_custom_bulk_properties and self.mass_kg == SECOND_MOON_MASS_KG:
+            self.mass_kg = derived_mass
+        elif not math.isfinite(self.mass_kg) or self.mass_kg < 0.0:
+            raise ValueError("mass_kg must be a finite non-negative value")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -136,4 +162,3 @@ class Trajectory:
         if state.ndim == 1:
             return state[:3]
         return state[..., :3]
-
