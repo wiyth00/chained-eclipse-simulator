@@ -11,16 +11,19 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
-import math
 from typing import Sequence
 
-from .constants import SECONDS_PER_DAY, WGS84_A_KM, WGS84_F
+from pyproj import Geod
+
+from .constants import SECONDS_PER_DAY
 from .eclipse_geometry import solve_local_circumstances
 from .ephemeris import EphemerisContext, enumerate_real_solar_eclipses
 from .models import RealEclipse
 
 TIMING_TARGET_SECONDS = 60.0
 POSITION_TARGET_KM = 25.0
+
+_WGS84_GEOD = Geod(ellps="WGS84")
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,90 +165,25 @@ def wgs84_geodesic_distance_km(
     latitude_2_deg: float,
     longitude_2_deg: float,
 ) -> float:
-    """Vincenty inverse distance on the WGS84 reference ellipsoid.
+    """Geodesic inverse distance on the WGS84 reference ellipsoid.
 
-    Validation points are close together, well away from Vincenty's
-    near-antipodal non-convergence case.
+    ``pyproj.Geod`` (Karney's algorithm) is the project's canonical geodesic
+    implementation, shared with ``search.py`` and ``sensitivity.py``.  The
+    hand-rolled Vincenty inverse that previously lived here is preserved in
+    ``tests/test_numeric_crosschecks.py`` as an independent reference, where
+    the two implementations are asserted to agree to sub-millimetre level
+    over validation-scale point pairs.
     """
 
     if latitude_1_deg == latitude_2_deg and longitude_1_deg == longitude_2_deg:
         return 0.0
-
-    semi_major = WGS84_A_KM
-    flattening = WGS84_F
-    semi_minor = semi_major * (1.0 - flattening)
-    phi_1 = math.radians(latitude_1_deg)
-    phi_2 = math.radians(latitude_2_deg)
-    longitude_delta = math.radians(
-        (longitude_2_deg - longitude_1_deg + 180.0) % 360.0 - 180.0
+    _, _, distance_m = _WGS84_GEOD.inv(
+        longitude_1_deg,
+        latitude_1_deg,
+        longitude_2_deg,
+        latitude_2_deg,
     )
-    reduced_1 = math.atan((1.0 - flattening) * math.tan(phi_1))
-    reduced_2 = math.atan((1.0 - flattening) * math.tan(phi_2))
-    sin_u1, cos_u1 = math.sin(reduced_1), math.cos(reduced_1)
-    sin_u2, cos_u2 = math.sin(reduced_2), math.cos(reduced_2)
-    longitude = longitude_delta
-
-    for _ in range(100):
-        sin_longitude = math.sin(longitude)
-        cos_longitude = math.cos(longitude)
-        sin_sigma = math.hypot(
-            cos_u2 * sin_longitude,
-            cos_u1 * sin_u2 - sin_u1 * cos_u2 * cos_longitude,
-        )
-        if sin_sigma == 0.0:
-            return 0.0
-        cos_sigma = sin_u1 * sin_u2 + cos_u1 * cos_u2 * cos_longitude
-        sigma = math.atan2(sin_sigma, cos_sigma)
-        sin_alpha = cos_u1 * cos_u2 * sin_longitude / sin_sigma
-        cos_sq_alpha = 1.0 - sin_alpha * sin_alpha
-        cos_two_sigma_m = (
-            cos_sigma - 2.0 * sin_u1 * sin_u2 / cos_sq_alpha
-            if cos_sq_alpha > 1e-16
-            else 0.0
-        )
-        coefficient = flattening / 16.0 * cos_sq_alpha * (
-            4.0 + flattening * (4.0 - 3.0 * cos_sq_alpha)
-        )
-        previous = longitude
-        longitude = longitude_delta + (1.0 - coefficient) * flattening * sin_alpha * (
-            sigma
-            + coefficient
-            * sin_sigma
-            * (
-                cos_two_sigma_m
-                + coefficient
-                * cos_sigma
-                * (-1.0 + 2.0 * cos_two_sigma_m * cos_two_sigma_m)
-            )
-        )
-        if abs(longitude - previous) < 1e-12:
-            break
-    else:
-        raise RuntimeError("WGS84 Vincenty inverse failed to converge")
-
-    reduced_sq = cos_sq_alpha * (
-        (semi_major * semi_major - semi_minor * semi_minor) / (semi_minor * semi_minor)
-    )
-    series_a = 1.0 + reduced_sq / 16_384.0 * (
-        4_096.0 + reduced_sq * (-768.0 + reduced_sq * (320.0 - 175.0 * reduced_sq))
-    )
-    series_b = reduced_sq / 1_024.0 * (
-        256.0 + reduced_sq * (-128.0 + reduced_sq * (74.0 - 47.0 * reduced_sq))
-    )
-    delta_sigma = series_b * sin_sigma * (
-        cos_two_sigma_m
-        + series_b
-        / 4.0
-        * (
-            cos_sigma * (-1.0 + 2.0 * cos_two_sigma_m * cos_two_sigma_m)
-            - series_b
-            / 6.0
-            * cos_two_sigma_m
-            * (-3.0 + 4.0 * sin_sigma * sin_sigma)
-            * (-3.0 + 4.0 * cos_two_sigma_m * cos_two_sigma_m)
-        )
-    )
-    return semi_minor * series_a * (sigma - delta_sigma)
+    return float(distance_m) / 1_000.0
 
 
 def _validate_one(
