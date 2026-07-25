@@ -35,9 +35,14 @@ def solve_kepler(mean_anomaly_rad: float | np.ndarray, eccentricity: float) -> n
     """Solve Kepler's equation with a vectorized Newton iteration."""
 
     mean = np.mod(np.asarray(mean_anomaly_rad, dtype=float), 2.0 * np.pi)
-    eccentric = mean.copy()
+    # NumPy ufuncs collapse 0-d array inputs to scalars, so a scalar mean
+    # anomaly reaches this point as np.float64; the previous in-place item
+    # assignment of the high-eccentricity starting guess therefore raised
+    # TypeError for scalar inputs with eccentricity > 0.8.
     if eccentricity > 0.8:
-        eccentric[...] = np.pi
+        eccentric = np.full_like(np.asarray(mean), np.pi)
+    else:
+        eccentric = np.asarray(mean).copy()
     for _ in range(20):
         residual = eccentric - eccentricity * np.sin(eccentric) - mean
         delta = residual / (1.0 - eccentricity * np.cos(eccentric))
