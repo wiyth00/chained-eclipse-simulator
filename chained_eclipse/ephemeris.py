@@ -7,6 +7,7 @@ rotating WGS84 ellipsoid.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -26,6 +27,77 @@ from .constants import (
 )
 from .models import RealEclipse
 
+# Known-good kernel digests. NAIF publishes no checksums for the generic
+# kernels, so pins must come from a trusted local copy:
+#
+#     sha256sum data/ephemeris/de440s.bsp
+#
+# Until a kernel is pinned here, integrity falls back to trust-on-first-use:
+# the first load records a `<kernel>.sha256` sidecar next to the kernel and
+# every later load must match it.
+KERNEL_SHA256_PINS: dict[str, str] = {}
+
+
+class EphemerisIntegrityError(RuntimeError):
+    """The on-disk ephemeris kernel does not match its expected SHA-256."""
+
+
+def _sha256_of_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_kernel_integrity(
+    kernel_path: Path, *, allow_unverified: bool = False
+) -> tuple[str, bool]:
+    """Check a kernel against its pin and/or recorded sidecar digest.
+
+    Returns ``(sha256_hex, verified)``.  ``verified`` is True only when the
+    digest matched a pre-existing expectation (a pin in
+    ``KERNEL_SHA256_PINS`` or a previously recorded sidecar).  A fresh
+    recording is not a verification.
+
+    Raises ``EphemerisIntegrityError`` on any mismatch unless
+    ``allow_unverified`` is True.
+    """
+
+    kernel = kernel_path.name
+    digest = _sha256_of_file(kernel_path)
+    verified = False
+
+    pinned = KERNEL_SHA256_PINS.get(kernel)
+    if pinned is not None:
+        if digest == pinned.lower():
+            verified = True
+        elif not allow_unverified:
+            raise EphemerisIntegrityError(
+                f"{kernel} has SHA-256 {digest}, but {pinned.lower()} is pinned in "
+                "KERNEL_SHA256_PINS. The kernel is corrupt or is a different "
+                "release. Delete it to re-download, or pass "
+                "allow_unverified=True to proceed anyway."
+            )
+
+    sidecar = kernel_path.with_name(kernel_path.name + ".sha256")
+    if sidecar.exists():
+        recorded = sidecar.read_text(encoding="utf-8").split()[0].lower()
+        if digest == recorded:
+            if pinned is None:
+                verified = True
+        elif not allow_unverified:
+            raise EphemerisIntegrityError(
+                f"{kernel} has SHA-256 {digest}, but {recorded} was recorded in "
+                f"{sidecar.name} when it was first downloaded. The kernel "
+                "changed on disk. Delete the kernel and the sidecar to "
+                "re-download, or pass allow_unverified=True to proceed anyway."
+            )
+    else:
+        sidecar.write_text(f"{digest}  {kernel}\n", encoding="utf-8")
+
+    return digest, verified
+
 
 @dataclass(slots=True)
 class EphemerisContext:
@@ -39,6 +111,8 @@ class EphemerisContext:
     sun: object
     cache_dir: Path
     kernel_path: Path
+    kernel_sha256: str = ""
+    kernel_verified: bool = False
 
     def time_utc(self, value: str) -> Time:
         return self.timescale.from_datetime(_parse_utc(value))
@@ -69,15 +143,27 @@ def _parse_utc(value: str):
 
 
 def load_ephemeris(
-    cache_dir: str | Path = "data/ephemeris", kernel: str = "de440s.bsp"
+    cache_dir: str | Path = "data/ephemeris",
+    kernel: str = "de440s.bsp",
+    *,
+    allow_unverified: bool = False,
 ) -> EphemerisContext:
-    """Load (and automatically download) the JPL kernel into a local cache."""
+    """Load (and automatically download) the JPL kernel into a local cache.
+
+    The kernel's SHA-256 is checked by ``verify_kernel_integrity``: against
+    ``KERNEL_SHA256_PINS`` when the kernel is pinned there, and against the
+    ``<kernel>.sha256`` sidecar recorded on first download otherwise.
+    """
 
     cache = Path(cache_dir).resolve()
     cache.mkdir(parents=True, exist_ok=True)
     loader = Loader(str(cache), verbose=True)
     timescale = loader.timescale()
     ephemeris = loader(kernel)
+    kernel_path = cache / kernel
+    kernel_sha256, kernel_verified = verify_kernel_integrity(
+        kernel_path, allow_unverified=allow_unverified
+    )
     return EphemerisContext(
         loader=loader,
         timescale=timescale,
@@ -86,7 +172,9 @@ def load_ephemeris(
         moon=ephemeris["moon"],
         sun=ephemeris["sun"],
         cache_dir=cache,
-        kernel_path=cache / kernel,
+        kernel_path=kernel_path,
+        kernel_sha256=kernel_sha256,
+        kernel_verified=kernel_verified,
     )
 
 
