@@ -38,13 +38,40 @@ def test_reference_fixtures_preserve_nasa_time_scales_and_sources() -> None:
     for reference in NASA_GSFC_REFERENCES:
         published_ut = datetime.fromisoformat(reference.published_greatest_ut)
         published_tdt = datetime.fromisoformat(reference.published_greatest_tdt)
+        # NASA rounds Delta-T to 0.1 s; the 2024 Apr 08 page's stated 70.6 s
+        # differs from its own TDT/UT pair (70.7 s) by exactly one rounding
+        # step, so the tolerance allows one 0.1 s step plus label rounding.
         assert (published_tdt - published_ut).total_seconds() == pytest.approx(
             reference.published_delta_t_s,
-            abs=0.051,
+            abs=0.105,
         )
         assert reference.timing_reference == "TDT (equivalent to TT)"
         assert reference.coordinate_reference.startswith("WGS84")
         assert reference.source_url.startswith("https://eclipse.gsfc.nasa.gov/")
+
+
+def test_references_are_chronologically_ordered() -> None:
+    """Keeps beginning-inserts and end-appends from different PRs coherent."""
+
+    published = [
+        datetime.fromisoformat(item.published_greatest_tdt)
+        for item in NASA_GSFC_REFERENCES
+    ]
+    assert published == sorted(published)
+
+
+def test_non_central_references_are_explicitly_timing_only() -> None:
+    """Partial references must not carry fabricated coordinates or durations."""
+
+    for reference in NASA_GSFC_REFERENCES:
+        if reference.eclipse_type == "partial":
+            assert reference.latitude_deg is None
+            assert reference.longitude_deg is None
+            assert reference.central_duration_s is None
+        else:
+            assert reference.latitude_deg is not None
+            assert reference.longitude_deg is not None
+            assert reference.central_duration_s is not None
 
 
 @pytest.mark.parametrize("event_id", EVENT_IDS)
@@ -59,6 +86,8 @@ def test_de440s_greatest_eclipse_timing_in_tt(results_by_id, event_id: str) -> N
 @pytest.mark.parametrize("event_id", EVENT_IDS)
 def test_de440s_central_point_within_25_km(results_by_id, event_id: str) -> None:
     result = results_by_id[event_id]
+    if result.reference.latitude_deg is None:
+        pytest.skip("non-central reference: NASA publishes no greatest-eclipse coordinates")
     assert result.coordinate_error_wgs84_km < POSITION_TARGET_KM
     assert result.coordinate_within_target
 
@@ -77,6 +106,7 @@ def test_structured_report_exposes_reference_provenance() -> None:
     assert report["all_passed"] is True
     assert "TT versus published TDT" in report["comparison_basis"]
     assert "not the timing pass/fail basis" in report["published_ut_note"]
+    assert "timing only" in report["non_central_reference_note"]
     for item in report["results"]:
         reference = item["reference"]
         assert reference["published_greatest_ut"]
