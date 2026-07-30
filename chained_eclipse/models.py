@@ -29,11 +29,9 @@ def spherical_mass_kg(radius_km: float, density_kg_m3: float) -> float:
 class OrbitalElements:
     """Osculating Earth-centred elements at the configured epoch.
 
-    Angular fields are degrees in the mean J2000 ecliptic frame. When callers
-    customize the radius or density but leave ``mass_kg`` at the package
-    default, the mass is recalculated to keep the physical parameters
-    internally consistent. An explicitly supplied non-default mass is retained
-    for independently constrained bodies and massless control integrations.
+    Angular fields are degrees in the mean J2000 ecliptic frame. If ``mass_kg``
+    is omitted, it is calculated from radius and density. Any explicit mass is
+    retained for independently constrained bodies and massless controls.
     """
 
     semimajor_axis_km: float = 180_000.0
@@ -45,16 +43,12 @@ class OrbitalElements:
     epoch_utc: str = "2026-07-10T00:00:00Z"
     radius_km: float = SECOND_MOON_RADIUS_KM
     density_kg_m3: float = SECOND_MOON_DENSITY_KG_M3
-    mass_kg: float = SECOND_MOON_MASS_KG
+    mass_kg: float | None = None
     frame: str = "mean_ecliptic_J2000"
 
     def __post_init__(self) -> None:
         derived_mass = spherical_mass_kg(self.radius_km, self.density_kg_m3)
-        uses_custom_bulk_properties = (
-            self.radius_km != SECOND_MOON_RADIUS_KM
-            or self.density_kg_m3 != SECOND_MOON_DENSITY_KG_M3
-        )
-        if uses_custom_bulk_properties and self.mass_kg == SECOND_MOON_MASS_KG:
+        if self.mass_kg is None:
             self.mass_kg = derived_mass
         elif not math.isfinite(self.mass_kg) or self.mass_kg < 0.0:
             raise ValueError("mass_kg must be a finite non-negative value")
@@ -152,6 +146,8 @@ class Trajectory:
     end_jd: float
     evaluator: Callable[[np.ndarray | float], np.ndarray]
     metadata: dict[str, Any] = field(default_factory=dict)
+    second_moon_radius_km: float = SECOND_MOON_RADIUS_KM
+    second_moon_mass_kg: float = SECOND_MOON_MASS_KG
 
     def state(self, jd: np.ndarray | float) -> np.ndarray:
         result = np.asarray(self.evaluator(jd), dtype=float)

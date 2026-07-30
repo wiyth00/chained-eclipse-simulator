@@ -25,7 +25,6 @@ import yaml
 
 from .constants import (
     REAL_MOON_MASS_KG,
-    SECOND_MOON_MASS_KG,
     SECONDS_PER_DAY,
     WGS84_A_KM,
     WGS84_B_KM,
@@ -219,7 +218,10 @@ def build_tide_frames(
             ephemeris, "real_moon", REAL_MOON_MASS_KG, float(tt_jd)
         )
         second = body_tide_state(
-            ephemeris, "second_moon", SECOND_MOON_MASS_KG, float(tt_jd)
+            ephemeris,
+            "second_moon",
+            ephemeris.elements.mass_kg,
+            float(tt_jd),
         )
         field = exact_equilibrium_tide_height_m(
             surface_positions_km, area_weights, (real, second)

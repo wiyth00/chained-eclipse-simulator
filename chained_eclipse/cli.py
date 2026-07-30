@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
 
-from .constants import MODEL_VERSION, SECOND_MOON_MASS_KG
+from .constants import MODEL_VERSION
 from .eclipse_geometry import angular_series, maximum_visibility_grid
 from .ephemeris import enumerate_real_solar_eclipses, load_ephemeris
 from .mapping import (
@@ -25,13 +25,18 @@ from .mapping import (
     plot_stability_elements,
     plot_world_tracks,
 )
-from .models import ChainedEvent, OrbitalElements, RealEclipse
+from .models import ChainedEvent, OrbitalElements, RealEclipse, spherical_mass_kg
+from .moon_architecture import architecture_from_config, elements_from_config
 from .optimize import optimize_earliest_design, screen_design_opportunities
 from .orbital_dynamics import elements_to_state, integrate_restricted
 from .report import build_report_artifact
 from .search import design_mode_event, fixed_system_search
 from .sensitivity import run_sensitivity_analysis
-from .stability import StabilityConfig, run_stability_check
+from .stability import (
+    StabilityConfig,
+    plot_stability as plot_coupled_stability,
+    run_stability_check,
+)
 from .validation import build_validation_report
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,10 +52,7 @@ def _version_string() -> str:
     except PackageNotFoundError:  # source tree without an installed distribution
         distribution = "0+unknown"
     # The kernel name mirrors load_ephemeris's default; a test pins the two.
-    return (
-        f"chained-eclipse {distribution} "
-        f"(model {MODEL_VERSION}, ephemeris kernel de440s.bsp)"
-    )
+    return f"chained-eclipse {distribution} (model {MODEL_VERSION}, ephemeris kernel de440s.bsp)"
 
 
 def _json_dump(path: Path, value: Any) -> None:
@@ -74,9 +76,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _resume_identity_mismatches(
-    manifest: dict[str, Any], identity: dict[str, str]
-) -> list[str]:
+def _resume_identity_mismatches(manifest: dict[str, Any], identity: dict[str, str]) -> list[str]:
     """Return human-readable reasons why a previous run cannot be resumed.
 
     ``identity`` holds the current run's ``model_version``, ``config_sha256``,
@@ -125,6 +125,8 @@ def _write_resume_manifest(
 def _baseline_elements(config: dict[str, Any]) -> OrbitalElements:
     moon = config["second_moon"]
     model = config["model"]
+    radius_km = float(moon["radius_km"])
+    density_kg_m3 = float(moon["density_kg_m3"])
     return OrbitalElements(
         semimajor_axis_km=float(moon["semimajor_axis_km"]),
         eccentricity=float(moon["eccentricity"]),
@@ -133,10 +135,16 @@ def _baseline_elements(config: dict[str, Any]) -> OrbitalElements:
         argument_periapsis_deg=float(moon.get("argument_periapsis_deg") or 0.0),
         mean_anomaly_deg=float(moon.get("mean_anomaly_deg") or 0.0),
         epoch_utc=str(model["epoch_utc"]),
-        radius_km=float(moon["radius_km"]),
-        density_kg_m3=float(moon["density_kg_m3"]),
-        mass_kg=SECOND_MOON_MASS_KG,
+        radius_km=radius_km,
+        density_kg_m3=density_kg_m3,
+        mass_kg=float(moon.get("mass_kg", spherical_mass_kg(radius_km, density_kg_m3))),
     )
+
+
+def _updates_project_optimized_config(config_path: Path) -> bool:
+    """Only the canonical baseline may refresh the checked-in optimized orbit."""
+
+    return config_path.resolve() == DEFAULT_CONFIG.resolve()
 
 
 def _save_optimized_config(
@@ -230,6 +238,7 @@ def _plot_event_bundle(
         second_tt,
         "second_moon",
         position_provider=trajectory.position,
+        body_radius_km=trajectory.second_moon_radius_km,
         grid_step_deg=2.0,
         time_step_minutes=5.0,
     )
@@ -284,6 +293,7 @@ def _plot_event_bundle(
         event.best_longitude_deg,
         "second_moon",
         position_provider=trajectory.position,
+        body_radius_km=trajectory.second_moon_radius_km,
         half_window_minutes=30.0,
         step_seconds=10.0,
     )
@@ -344,11 +354,13 @@ def _stability_figure(stability: dict[str, Any], output: Path) -> str:
 
 def _headline(event: ChainedEvent) -> str:
     latitude = f"{abs(event.best_latitude_deg):.4f}° {'N' if event.best_latitude_deg >= 0 else 'S'}"
-    longitude = f"{abs(event.best_longitude_deg):.4f}° {'E' if event.best_longitude_deg >= 0 else 'W'}"
+    longitude = (
+        f"{abs(event.best_longitude_deg):.4f}° {'E' if event.best_longitude_deg >= 0 else 'W'}"
+    )
     gap_minutes = int(event.midpoint_separation_s // 60)
     gap_seconds = event.midpoint_separation_s - 60 * gap_minutes
     return (
-        f"Under the optimized stable configuration, the earliest chained eclipse occurs on "
+        f"Under the optimized configuration, the earliest chained eclipse occurs on "
         f"{event.real_eclipse.maximum_utc[:10]}. At {latitude}, {longitude}, the real Moon "
         f"produces a {event.real_eclipse.eclipse_type} eclipse at {event.real_eclipse.maximum_utc}, "
         f"followed {gap_minutes} minutes {gap_seconds:.1f} seconds later by the second moon's "
@@ -375,9 +387,7 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         "kernel_sha256": context.kernel_sha256,
     }
     resume_manifest_path = output / "resume_manifest.json"
-    resume_manifest = (
-        _load_resume_manifest(resume_manifest_path, identity) if args.resume else None
-    )
+    resume_manifest = _load_resume_manifest(resume_manifest_path, identity) if args.resume else None
     stages_reused: list[str] = []
 
     real_json_path = output / "real_moon_eclipses.json"
@@ -468,12 +478,12 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         target_latitude_deg = float(design.target_latitude_deg)
         target_longitude_deg = float(design.target_longitude_deg)
         _save_optimized_config(optimized_path, optimized_elements, design.diagnostics)
-        # Mirror the requested project-level configuration path.
-        _save_optimized_config(
-            ROOT / "config" / "optimized_system.yaml",
-            optimized_elements,
-            design.diagnostics,
-        )
+        if _updates_project_optimized_config(config_path):
+            _save_optimized_config(
+                ROOT / "config" / "optimized_system.yaml",
+                optimized_elements,
+                design.diagnostics,
+            )
         _json_dump(design_event_json_path, design_event_dict)
     _write_resume_manifest(
         resume_manifest_path,
@@ -495,9 +505,7 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         rtol=1e-10,
         max_step_seconds=10_800.0,
     )
-    fixed_events, fixed_tracks = fixed_system_search(
-        context, real_eclipses, fixed_trajectory
-    )
+    fixed_events, fixed_tracks = fixed_system_search(context, real_eclipses, fixed_trajectory)
     if not fixed_events:
         raise RuntimeError("fixed-system search produced no qualifying chained eclipses")
     rows = [_flatten_event(event) for event in fixed_events]
@@ -511,8 +519,7 @@ def run_full(args: argparse.Namespace) -> dict[str, Any]:
         stages_reused.append("stability")
         if not stability.get("stable", False):
             raise RuntimeError(
-                "optimized configuration failed stability: "
-                f"{stability.get('termination_reason')}"
+                f"optimized configuration failed stability: {stability.get('termination_reason')}"
             )
     else:
         LOGGER.info("[5/7] Running the 1,000-year coupled REBOUND stability check…")
@@ -684,7 +691,8 @@ def run_validate(args: argparse.Namespace) -> None:
 
 
 def run_design_only(args: argparse.Namespace) -> None:
-    config = _load_config(Path(args.config))
+    config_path = Path(args.config).resolve()
+    config = _load_config(config_path)
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     context = load_ephemeris(
@@ -702,9 +710,7 @@ def run_design_only(args: argparse.Namespace) -> None:
         target_gap_minutes=float(config["optimization"]["design_totality_gap_minutes"]),
     )
     _json_dump(output / "design_mode_opportunities.json", opportunities)
-    pd.DataFrame(opportunities).to_csv(
-        output / "design_mode_opportunities.csv", index=False
-    )
+    pd.DataFrame(opportunities).to_csv(output / "design_mode_opportunities.csv", index=False)
     design = optimize_earliest_design(
         context,
         real_eclipses,
@@ -717,11 +723,12 @@ def run_design_only(args: argparse.Namespace) -> None:
     _save_optimized_config(
         output / "optimized_system.yaml", design.optimized_elements, design.diagnostics
     )
-    _save_optimized_config(
-        ROOT / "config" / "optimized_system.yaml",
-        design.optimized_elements,
-        design.diagnostics,
-    )
+    if _updates_project_optimized_config(config_path):
+        _save_optimized_config(
+            ROOT / "config" / "optimized_system.yaml",
+            design.optimized_elements,
+            design.diagnostics,
+        )
     _json_dump(output / "design_mode_event.json", event.to_dict())
     print(_headline(event))
 
@@ -764,10 +771,14 @@ def run_stability_only(args: argparse.Namespace) -> None:
         ROOT / config["model"]["ephemeris_cache"],
         allow_unverified=args.allow_unverified_ephemeris,
     )
-    optimized = Path(args.output).resolve() / "optimized_system.yaml"
-    if not optimized.exists():
-        optimized = ROOT / "config" / "optimized_system.yaml"
-    elements = _load_optimized_elements(optimized)
+    binary_architecture = architecture_from_config(config)
+    if binary_architecture is None:
+        optimized = Path(args.output).resolve() / "optimized_system.yaml"
+        if not optimized.exists():
+            optimized = ROOT / "config" / "optimized_system.yaml"
+        elements = _load_optimized_elements(optimized)
+    else:
+        elements = elements_from_config(config)
     result = run_stability_check(
         context,
         elements,
@@ -775,9 +786,31 @@ def run_stability_only(args: argparse.Namespace) -> None:
             years=args.stability_years,
             sample_interval_days=args.stability_years * 365.25 / 500.0,
         ),
+        binary_architecture=binary_architecture,
     )
-    _json_dump(Path(args.output).resolve() / "stability.json", result.to_dict())
-    print(json.dumps({"stable": result.stable, "years": result.integrated_years}, indent=2))
+    output = Path(args.output).resolve()
+    _json_dump(output / "stability.json", result.to_dict())
+    figure = plot_coupled_stability(
+        result,
+        output / "stability.png",
+        title=(
+            "Hierarchical binary-moon stability"
+            if binary_architecture is not None
+            else "Coupled two-moon stability"
+        ),
+    )
+    plt.close(figure)
+    print(
+        json.dumps(
+            {
+                "stable": result.stable,
+                "years": result.integrated_years,
+                "architecture": result.architecture,
+                "minimum_moon_separation_km": result.min_moon_moon_distance_km,
+            },
+            indent=2,
+        )
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -808,12 +841,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="proceed even if the ephemeris kernel fails its SHA-256 integrity check",
     )
     verbosity = parser.add_mutually_exclusive_group()
-    verbosity.add_argument(
-        "--quiet", action="store_true", help="log warnings and errors only"
-    )
-    verbosity.add_argument(
-        "--verbose", action="store_true", help="log debug-level progress"
-    )
+    verbosity.add_argument("--quiet", action="store_true", help="log warnings and errors only")
+    verbosity.add_argument("--verbose", action="store_true", help="log debug-level progress")
     return parser
 
 

@@ -105,6 +105,7 @@ def screen_design_opportunities(
             0.0,
             "second_moon",
             position_provider=lambda _jd, position=target_position: position,
+            body_radius_km=baseline.radius_km,
         )
         opportunities.append(
             {

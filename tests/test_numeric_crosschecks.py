@@ -23,7 +23,9 @@ from chained_eclipse.stability import _solve_kepler, orbital_elements_to_icrf_st
 from chained_eclipse.validation import NASA_GSFC_REFERENCES, wgs84_geodesic_distance_km
 
 _REFERENCE_SITES = tuple(
-    (reference.latitude_deg, reference.longitude_deg) for reference in NASA_GSFC_REFERENCES
+    (reference.latitude_deg, reference.longitude_deg)
+    for reference in NASA_GSFC_REFERENCES
+    if reference.latitude_deg is not None and reference.longitude_deg is not None
 )
 
 

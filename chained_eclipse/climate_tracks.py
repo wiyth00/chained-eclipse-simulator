@@ -15,7 +15,7 @@ import yaml
 
 from .coupled_eclipse import CoupledEphemeris, generate_coupled_track
 from .ephemeris import load_ephemeris, time_iso_utc
-from .models import OrbitalElements
+from .moon_architecture import architecture_from_config, elements_from_config
 
 
 REAL_BLUE = "#24649A"
@@ -59,7 +59,8 @@ def build_standout_tracks(
     climate = json.loads(climate_source.read_text(encoding="utf-8"))
     dynamics_model = str(climate.get("dynamics_model", "baseline")).strip().lower()
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
-    elements = OrbitalElements(**config["orbital_elements"])
+    elements = elements_from_config(config)
+    binary_architecture = architecture_from_config(config)
     context = load_ephemeris("data/ephemeris")
     ephemeris_class: type[CoupledEphemeris]
     if dynamics_model == "baseline":
@@ -74,11 +75,15 @@ def build_standout_tracks(
             f"unsupported climate dynamics_model {dynamics_model!r}; "
             "expected 'baseline' or 'enhanced'"
         )
+    ephemeris_kwargs: dict[str, Any] = {
+        "sample_step_seconds": float(climate["trajectory"]["sample_step_seconds"])
+    }
+    ephemeris_kwargs["binary_architecture"] = binary_architecture
     ephemeris = ephemeris_class(
         context,
         elements,
         str(climate["end_utc"]),
-        sample_step_seconds=float(climate["trajectory"]["sample_step_seconds"]),
+        **ephemeris_kwargs,
     )
 
     selected: list[dict[str, Any]] = []

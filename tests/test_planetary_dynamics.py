@@ -10,6 +10,7 @@ import yaml
 
 from chained_eclipse.ephemeris import load_ephemeris
 from chained_eclipse.models import OrbitalElements
+from chained_eclipse.moon_architecture import architecture_from_config, elements_from_config
 from chained_eclipse.planetary_dynamics import (
     DEFAULT_MAJOR_PLANETS,
     PLANETARY_POINT_MASSES,
@@ -72,6 +73,32 @@ def test_planetary_system_integrates_cleanly_for_thirty_days() -> None:
     assert abs((final_energy - initial_energy) / initial_energy) < 1.0e-11
     for name in ("sun", "earth", "real_moon", "second_moon", *DEFAULT_MAJOR_PLANETS):
         assert np.all(np.isfinite(_particle_state(simulation.particles[name])))
+
+
+def test_planetary_system_accepts_bound_binary_initial_conditions() -> None:
+    context = load_ephemeris(ROOT / "data" / "ephemeris")
+    payload = yaml.safe_load((ROOT / "config" / "bound_binary_giant.yaml").read_text())
+    elements = elements_from_config(payload)
+    architecture = architecture_from_config(payload)
+    assert architecture is not None
+
+    simulation, metadata = build_planetary_simulation(
+        context,
+        elements,
+        binary_architecture=architecture,
+    )
+    real = simulation.particles["real_moon"]
+    second = simulation.particles["second_moon"]
+    separation = np.linalg.norm(_particle_state(second)[:3] - _particle_state(real)[:3])
+
+    assert metadata["architecture"] == "hierarchical binary moons"
+    periapsis = architecture.mutual_orbit.semimajor_axis_km * (
+        1.0 - architecture.mutual_orbit.eccentricity
+    )
+    apoapsis = architecture.mutual_orbit.semimajor_axis_km * (
+        1.0 + architecture.mutual_orbit.eccentricity
+    )
+    assert periapsis <= separation <= apoapsis
 
 
 def test_pluto_is_opt_in_and_late_addition_is_rejected() -> None:

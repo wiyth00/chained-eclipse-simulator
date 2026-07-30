@@ -20,6 +20,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from .ephemeris import EphemerisContext
+from .moon_architecture import BinaryMoonArchitecture
 from .models import OrbitalElements
 from .stability import build_coupled_simulation
 
@@ -169,7 +170,9 @@ def build_planetary_simulation(
     context: EphemerisContext,
     elements: OrbitalElements,
     *,
+    real_moon_state_icrf: Any | None = None,
     second_moon_state_icrf: Any | None = None,
+    binary_architecture: BinaryMoonArchitecture | None = None,
     ias15_epsilon: float = 1.0e-10,
     include_pluto: bool = False,
 ) -> tuple[Any, dict[str, Any]]:
@@ -178,7 +181,9 @@ def build_planetary_simulation(
     simulation, metadata = build_coupled_simulation(
         context,
         elements,
+        real_moon_state_icrf=real_moon_state_icrf,
         second_moon_state_icrf=second_moon_state_icrf,
+        binary_architecture=binary_architecture,
         ias15_epsilon=ias15_epsilon,
     )
     names = DEFAULT_MAJOR_PLANETS + (("pluto",) if include_pluto else ())

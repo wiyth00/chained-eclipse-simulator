@@ -22,7 +22,6 @@ from skyfield.framelib import itrs
 from .animation import build_default_scene
 from .constants import (
     REAL_MOON_RADIUS_KM,
-    SECOND_MOON_RADIUS_KM,
     SECONDS_PER_DAY,
     SPEED_OF_LIGHT_KM_S,
     SUN_RADIUS_KM,
@@ -188,12 +187,15 @@ class EclipseMapAnimator:
             sun_ecef, real_ecef, REAL_MOON_RADIUS_KM
         )
         second_obscuration, second_central = self.grid.obscuration(
-            sun_ecef, second_ecef, SECOND_MOON_RADIUS_KM
+            sun_ecef, second_ecef, self.scene.second_moon_radius_km
         )
         daylight = self.grid.daylight(sun_ecef)
         real_point = central_point_real(self.scene.context, time)
         second_point = central_point_hypothetical(
-            self.scene.context, time, second_now
+            self.scene.context,
+            time,
+            second_now,
+            moon_radius_km=self.scene.second_moon_radius_km,
         )
         return (
             time,
@@ -462,6 +464,7 @@ def main(argv: list[str] | None = None) -> int:
         "end_utc": time_iso_utc(scene.context.tt_jd(float(times[-1])), places=1),
         "footprints": "instantaneous topocentric disk-overlap obscuration on WGS84",
         "second_moon_light_time": "one geocentric retarded-position iteration per frame",
+        "second_moon_radius_km": scene.second_moon_radius_km,
     }
     output.with_suffix(".json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"

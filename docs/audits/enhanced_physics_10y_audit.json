@@ -1,0 +1,46 @@
+{
+  "system": "bound-binary-giant",
+  "start_utc": "2026-07-10T00:00:00Z",
+  "end_utc": "2036-07-10T00:00:00Z",
+  "trajectory_sample_step_seconds": 86400.0,
+  "force_model": [
+    "fully coupled Newtonian point masses",
+    "seven active major-planet perturbers",
+    "Earth J2 through REBOUNDx gravitational_harmonics",
+    "full first-order post-Newtonian interactions through REBOUNDx gr_full",
+    "vector constant-time-lag tide and coupled Earth spin through REBOUNDx tides_spin"
+  ],
+  "earth_rotation_vs_real_moon_only_control": {
+    "final_delta_mean_solar_lod_ms": 0.2533032820792869,
+    "final_delta_ut1_s": -0.46717858980798227,
+    "final_longitude_shift_deg": 0.0019519070108547551,
+    "final_pole_separation_arcsec": 43.72370648213811,
+    "maximum_pole_separation_arcsec": 43.73834973666441
+  },
+  "mutual_separation_km": {
+    "minimum": 36235.97868356958,
+    "maximum": 44123.894545733194,
+    "final": 39006.3813098501
+  },
+  "moon_pair_barycenter_distance_from_earth_km": {
+    "minimum": 467532.448052021,
+    "maximum": 510388.5262788506,
+    "final": 497427.46039958776
+  },
+  "one_year_j2_isolation": {
+    "comparison": "full model minus an otherwise identical earth_j2_enabled=false run",
+    "final_pair_barycenter_position_difference_km": 11.286317673200392,
+    "final_orbit_normal_difference_arcsec": 1.1857945592080437,
+    "delta_final_lod_ms": 5.427864380180836e-06
+  },
+  "newtonian_energy_diagnostic": {
+    "fractional_change": -1.2423906615883708e-09,
+    "interpretation": "This is not a total conserved-energy error: it omits the J2 and 1PN Hamiltonian terms, and the tide is dissipative."
+  },
+  "limitations": [
+    "The constant-time-lag tide is calibrated to the present real-Moon recession rate; it is not a frequency-dependent ocean or solid-Earth tide model.",
+    "The moons are point masses for tidal response; tides, deformation, and spin inside either moon are omitted.",
+    "Earth's J2 axis is fixed in ICRF and its reaction torque on Earth spin is omitted.",
+    "Skyfield's observed Earth orientation is retained as the reference and the modeled differential spin phase and pole are composed onto it."
+  ]
+}

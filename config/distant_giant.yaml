@@ -1,0 +1,55 @@
+scenario:
+  name: distant-giant-3x
+  description: >-
+    A Mercury-sized second moon three times farther from Earth, with radius and
+    every orbital distance scaled together to preserve its geocentric angular
+    diameter at corresponding orbital phases.
+  linear_scale_factor: 3.0
+  mass_model: constant-density
+  dynamical_expectation: >-
+    Deliberately aggressive. The restricted eclipse design remains meaningful,
+    but the same-density coupled system is expected to strongly perturb the real
+    Moon and may fail the long-term stability screen.
+
+model:
+  name: chained-eclipse-distant-giant-3x
+  epoch_utc: "2026-07-10T00:00:00Z"
+  end_utc: "2031-01-01T00:00:00Z"
+  ephemeris: de440s.bsp
+  ephemeris_cache: data/ephemeris
+  dynamics: restricted_ephemeris_forced
+
+second_moon:
+  semimajor_axis_km: 540000.0
+  eccentricity: 0.04
+  inclination_deg: 5.0
+  radius_km: 2514.0
+  density_kg_m3: 3344.0
+  mass_kg: 2.225618374301551e+23
+  prograde: true
+  longitude_ascending_node_deg: null
+  argument_periapsis_deg: null
+  mean_anomaly_deg: null
+
+optimization:
+  semimajor_axis_bounds_km: [500000.0, 580000.0]
+  inclination_bounds_deg: [3.0, 7.0]
+  maximum_time_separation_hours: 12.0
+  design_totality_gap_minutes: 12.0
+  coarse_samples: 512
+  random_seed: 20260710
+
+geometry:
+  earth_model: WGS84
+  minimum_solar_altitude_deg: 0.0
+  real_search_step_minutes: 20.0
+  second_search_step_minutes: 5.0
+  track_step_seconds: 60.0
+  contact_bracket_step_seconds: 20.0
+
+stability:
+  years: 10.0
+  samples: 501
+  integrator: ias15
+  include_earth_j2: false
+  optional_long_years: 1000.0

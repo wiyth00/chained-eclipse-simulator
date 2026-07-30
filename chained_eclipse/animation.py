@@ -116,10 +116,13 @@ class EclipseAnimationScene:
         context: EphemerisContext,
         trajectory: Trajectory,
         event: AnimationEvent,
+        *,
+        second_moon_radius_km: float = SECOND_MOON_RADIUS_KM,
     ) -> None:
         self.context = context
         self.trajectory = trajectory
         self.event = event
+        self.second_moon_radius_km = float(second_moon_radius_km)
 
     def sample(self, tt_jd: float) -> AnimationFrame:
         """Evaluate DE440s, the numerical moon, and both shadow axes."""
@@ -130,7 +133,12 @@ class EclipseAnimationScene:
         real_moon = np.asarray(self.context.moon.at(time).position.km, dtype=float) - earth
         second_moon = np.asarray(self.trajectory.position(float(tt_jd)), dtype=float)
         real_shadow = real_shadow_state(self.context, time)
-        second_shadow = hypothetical_shadow_state(self.context, time, second_moon)
+        second_shadow = hypothetical_shadow_state(
+            self.context,
+            time,
+            second_moon,
+            moon_radius_km=self.second_moon_radius_km,
+        )
         return AnimationFrame(
             tt_jd=float(tt_jd),
             time_utc=time_iso_utc(time, places=1),
@@ -143,7 +151,10 @@ class EclipseAnimationScene:
             second_sun_moon_distance_km=second_shadow.sun_moon_distance_km,
             real_core_intersection=central_point_real(self.context, time),
             second_core_intersection=central_point_hypothetical(
-                self.context, time, second_moon
+                self.context,
+                time,
+                second_moon,
+                moon_radius_km=self.second_moon_radius_km,
             ),
         )
 
@@ -170,7 +181,12 @@ def build_default_scene(
         rtol=3e-11,
         max_step_seconds=7_200.0,
     )
-    return EclipseAnimationScene(context, trajectory, event), event
+    return EclipseAnimationScene(
+        context,
+        trajectory,
+        event,
+        second_moon_radius_km=elements.radius_km,
+    ), event
 
 
 def animation_times(
@@ -434,7 +450,7 @@ class MatplotlibEclipseAnimator:
             frame,
             moon_position=frame.second_moon_from_earth_km,
             axis=frame.second_axis_icrf,
-            moon_radius=SECOND_MOON_RADIUS_KM,
+            moon_radius=self.scene.second_moon_radius_km,
             color=SECOND_COLOR,
             near_earth_only=True,
             intersection=frame.second_core_intersection,
@@ -484,7 +500,7 @@ class MatplotlibEclipseAnimator:
             frame,
             moon_position=frame.second_moon_from_earth_km,
             axis=frame.second_axis_icrf,
-            moon_radius=SECOND_MOON_RADIUS_KM,
+            moon_radius=self.scene.second_moon_radius_km,
             color=SECOND_COLOR,
             near_earth_only=False,
             intersection=None,
@@ -493,7 +509,12 @@ class MatplotlibEclipseAnimator:
         sun_hat = frame.sun_from_earth_km / np.linalg.norm(frame.sun_from_earth_km)
         orbit.quiver(0.0, 0.0, 0.0, *(sun_hat * 90_000.0), color="#FFD56A", linewidth=1.2, arrow_length_ratio=0.08)
         orbit.text(*(sun_hat * 105_000.0), "Sun", color="#FFD56A", ha="center")
-        _set_equal_limits(orbit, 430_000.0)
+        orbit_limit = max(
+            430_000.0,
+            1.15 * float(np.linalg.norm(frame.real_moon_from_earth_km)),
+            1.15 * float(np.linalg.norm(frame.second_moon_from_earth_km)),
+        )
+        _set_equal_limits(orbit, orbit_limit)
         orbit.set_title("True centre positions · moon markers enlarged", color="white", pad=4)
         legend = orbit.legend(loc="lower center", bbox_to_anchor=(0.5, -0.03), ncol=3, frameon=False, fontsize=8)
         for text in legend.get_texts():
@@ -619,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
         "physics": {
             "real_bodies": "JPL DE440s",
             "second_moon": "DOP853 restricted propagation with Earth J2 and prescribed Sun/Moon perturbations",
+            "second_moon_radius_km": scene.second_moon_radius_km,
             "earth": "rotating WGS84 ellipsoid",
             "shadow_axes": "existing apparent-axis eclipse geometry",
         },

@@ -10,7 +10,7 @@ import numpy as np
 from pyproj import Geod
 from scipy.optimize import minimize_scalar
 
-from .constants import SECONDS_PER_DAY, WGS84_A_KM
+from .constants import SECOND_MOON_RADIUS_KM, SECONDS_PER_DAY, WGS84_A_KM
 from .eclipse_geometry import (
     apparent_disk_geometry,
     central_point_hypothetical,
@@ -32,6 +32,14 @@ class HypotheticalEclipse:
     longitude_deg: float | None
     penumbra_margin_km: float
     core_radius_km: float
+
+
+def _trajectory_moon_radius_km(trajectory: Trajectory) -> float:
+    """Read custom trajectory physics while retaining lightweight test doubles."""
+
+    return float(
+        getattr(trajectory, "second_moon_radius_km", SECOND_MOON_RADIUS_KM)
+    )
 
 
 def _iso_datetime(value: str) -> datetime:
@@ -148,6 +156,7 @@ def design_mode_event(
         longitude,
         "second_moon",
         position_provider=design.trajectory.position,
+        body_radius_km=design.optimized_elements.radius_km,
         bracket_step_seconds=bracket_step_seconds,
     )
     real_track = generate_central_track(
@@ -161,6 +170,7 @@ def design_mode_event(
         design.target_second_maximum_tt_jd,
         "second_moon",
         position_provider=design.trajectory.position,
+        body_radius_km=design.optimized_elements.radius_km,
         step_seconds=30.0,
     )
     distance, _, _ = minimum_track_distance_km(real_track, second_track)
@@ -199,7 +209,12 @@ def find_hypothetical_eclipses_near(
     def clearance(offset_seconds: float) -> float:
         tt_jd = center_tt_jd + offset_seconds / SECONDS_PER_DAY
         time = context.tt_jd(tt_jd)
-        state = hypothetical_shadow_state(context, time, trajectory.position(tt_jd))
+        state = hypothetical_shadow_state(
+            context,
+            time,
+            trajectory.position(tt_jd),
+            moon_radius_km=_trajectory_moon_radius_km(trajectory),
+        )
         return state.axis_miss_km - (WGS84_A_KM + state.penumbra_radius_km)
 
     values = np.asarray([clearance(float(offset)) for offset in offsets])
@@ -214,7 +229,10 @@ def find_hypothetical_eclipses_near(
         def axis_miss(offset_seconds: float) -> float:
             tt_jd = center_tt_jd + offset_seconds / SECONDS_PER_DAY
             state = hypothetical_shadow_state(
-                context, context.tt_jd(tt_jd), trajectory.position(tt_jd)
+                context,
+                context.tt_jd(tt_jd),
+                trajectory.position(tt_jd),
+                moon_radius_km=_trajectory_moon_radius_km(trajectory),
             )
             return state.axis_miss_km
 
@@ -226,7 +244,12 @@ def find_hypothetical_eclipses_near(
         )
         maximum_tt = center_tt_jd + float(result.x) / SECONDS_PER_DAY
         time = context.tt_jd(maximum_tt)
-        point = central_point_hypothetical(context, time, trajectory.position(maximum_tt))
+        point = central_point_hypothetical(
+            context,
+            time,
+            trajectory.position(maximum_tt),
+            moon_radius_km=_trajectory_moon_radius_km(trajectory),
+        )
         if point is None:
             kind = "partial"
             lat = lon = None
@@ -280,6 +303,7 @@ def _best_common_location(
             0.0,
             "second_moon",
             position_provider=trajectory.position,
+            body_radius_km=_trajectory_moon_radius_km(trajectory),
         )
         horizon_penalty = 0.0 if min(real_geometry.solar_altitude_deg, second_geometry.solar_altitude_deg) > 0 else 10.0
         total_bonus = 2.0 if (
@@ -328,6 +352,7 @@ def fixed_system_search(
                 second_event.maximum_tt_jd,
                 "second_moon",
                 position_provider=trajectory.position,
+                body_radius_km=_trajectory_moon_radius_km(trajectory),
                 step_seconds=120.0,
                 include_partial_maximum=True,
             )
@@ -357,6 +382,7 @@ def fixed_system_search(
                 longitude,
                 "second_moon",
                 position_provider=trajectory.position,
+                body_radius_km=_trajectory_moon_radius_km(trajectory),
                 bracket_step_seconds=60.0,
             )
             event_id = real_event.event_id.replace("_real", "_fixed_chain")

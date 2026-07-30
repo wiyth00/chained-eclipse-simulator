@@ -16,7 +16,7 @@ from skyfield.framelib import itrs
 import yaml
 
 from .animation_2d import SurfaceGrid
-from .constants import SECOND_MOON_RADIUS_KM, SECONDS_PER_DAY, SPEED_OF_LIGHT_KM_S
+from .constants import SECONDS_PER_DAY, SPEED_OF_LIGHT_KM_S
 from .eclipse_geometry import generate_central_track
 from .ephemeris import load_ephemeris, time_iso_utc
 from .models import OrbitalElements
@@ -39,7 +39,7 @@ def _instantaneous_fields(context, trajectory, grid: SurfaceGrid, tt_jd: float):
     return grid.obscuration(
         rotation @ sun_icrf,
         rotation @ moon_icrf,
-        SECOND_MOON_RADIUS_KM,
+        trajectory.second_moon_radius_km,
     )
 
 
@@ -75,6 +75,7 @@ def build_ground_track_map(
         maximum_tt,
         "second_moon",
         position_provider=trajectory.position,
+        body_radius_km=elements.radius_km,
         half_window_hours=3.0,
         step_seconds=20.0,
     )

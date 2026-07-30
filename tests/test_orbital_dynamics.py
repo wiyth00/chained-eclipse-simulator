@@ -36,6 +36,16 @@ def test_explicit_independently_constrained_mass_is_retained() -> None:
     assert elements.mass_kg == 9.0e21
 
 
+def test_explicit_nominal_mass_is_retained_with_custom_radius() -> None:
+    elements = OrbitalElements(
+        radius_km=2_514.0,
+        density_kg_m3=3_344.0,
+        mass_kg=SECOND_MOON_MASS_KG,
+    )
+
+    assert elements.mass_kg == SECOND_MOON_MASS_KG
+
+
 def test_massless_control_is_retained() -> None:
     elements = OrbitalElements(mass_kg=0.0)
 

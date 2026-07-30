@@ -77,6 +77,7 @@ def plot_total_tracks(
             maximum_tt,
             "second_moon",
             position_provider=trajectory.position,
+            body_radius_km=elements.radius_km,
             half_window_hours=3.0,
             step_seconds=20.0,
         )

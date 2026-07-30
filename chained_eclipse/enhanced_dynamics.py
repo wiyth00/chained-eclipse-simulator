@@ -34,6 +34,7 @@ from .constants import (
     WGS84_A_KM,
 )
 from .models import OrbitalElements
+from .moon_architecture import BinaryMoonArchitecture
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,6 +427,7 @@ def build_enhanced_coupled_simulation(
     *,
     config: EnhancedDynamicsConfig | None = None,
     second_moon_state_icrf: Any | None = None,
+    binary_architecture: BinaryMoonArchitecture | None = None,
     ias15_epsilon: float = 1.0e-10,
 ) -> tuple[Any, dict[str, Any]]:
     """Build the existing coupled simulation and attach enhanced forces."""
@@ -438,6 +440,7 @@ def build_enhanced_coupled_simulation(
         context,
         elements,
         second_moon_state_icrf=second_moon_state_icrf,
+        binary_architecture=binary_architecture,
         ias15_epsilon=ias15_epsilon,
     )
     force_metadata = attach_enhanced_forces(simulation, config)

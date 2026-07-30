@@ -18,7 +18,7 @@ from .constants import (
     SUN_RADIUS_KM,
     WGS84_A_KM,
 )
-from .coupled_eclipse import BODY_RADIUS, BodyName, CoupledEphemeris
+from .coupled_eclipse import BodyName, CoupledEphemeris, body_radius_km
 from .eclipse_geometry import angular_separation
 from .ephemeris import load_ephemeris, time_iso_utc
 from .models import OrbitalElements
@@ -88,7 +88,7 @@ def _margin(
     axial, offset, penumbra, umbra, _ = earth_shadow_geometry(ephemeris, body, tt_jd)
     if float(axial) <= 0.0:
         return 1.0e9
-    radius = BODY_RADIUS[body]
+    radius = body_radius_km(ephemeris, body)
     if contact == "penumbral":
         boundary = float(penumbra) + radius
     elif contact == "umbral":
@@ -156,7 +156,8 @@ def find_lunar_eclipses(
     events: list[LunarEclipseEvent] = []
     for body in ("real_moon", "second_moon"):
         axial, offset, penumbra, _, _ = earth_shadow_geometry(ephemeris, body, times)
-        penumbral_margin = offset - (penumbra + BODY_RADIUS[body])
+        radius = body_radius_km(ephemeris, body)
+        penumbral_margin = offset - (penumbra + radius)
         inside = (axial > 0.0) & (penumbral_margin <= 0.0)
         transitions = np.diff(inside.astype(np.int8))
         starts = list(np.flatnonzero(transitions == 1))
@@ -226,7 +227,7 @@ def find_lunar_eclipses(
                     penumbra_radius_km=float(pen_radius),
                     moon_distance_km=float(moon_distance),
                     moon_angular_diameter_deg=float(
-                        2.0 * np.degrees(np.arcsin(BODY_RADIUS[body] / float(moon_distance)))
+                        2.0 * np.degrees(np.arcsin(radius / float(moon_distance)))
                     ),
                     other_moon_angular_separation_deg=other_separation,
                     other_moon_shadow_offset_deg=other_shadow_offset,

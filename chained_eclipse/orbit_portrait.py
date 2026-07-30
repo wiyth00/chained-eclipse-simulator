@@ -11,10 +11,10 @@ from matplotlib.patches import Circle
 import numpy as np
 import yaml
 
-from .constants import OBLIQUITY_J2000_DEG, WGS84_A_KM
+from .constants import OBLIQUITY_J2000_DEG, REAL_MOON_MASS_KG, WGS84_A_KM
 from .coupled_eclipse import CoupledEphemeris
 from .ephemeris import load_ephemeris
-from .models import OrbitalElements
+from .moon_architecture import architecture_from_config, elements_from_config
 
 
 INK = "#102039"
@@ -40,7 +40,8 @@ def build_orbit_portrait(
 ) -> Path:
     context = load_ephemeris("data/ephemeris")
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
-    elements = OrbitalElements(**config["orbital_elements"])
+    elements = elements_from_config(config)
+    binary_architecture = architecture_from_config(config)
     end_tt = float(context.time_utc(elements.epoch_utc).tt) + days
     end_utc = context.tt_jd(end_tt).utc_strftime("%Y-%m-%dT%H:%M:%SZ")
     ephemeris = CoupledEphemeris(
@@ -48,6 +49,7 @@ def build_orbit_portrait(
         elements,
         end_utc,
         sample_step_seconds=step_minutes * 60.0,
+        binary_architecture=binary_architecture,
     )
     times = np.arange(
         ephemeris.epoch_tt_jd,
@@ -58,7 +60,22 @@ def build_orbit_portrait(
     real = (rotation @ ephemeris.relative("real_moon", times).T).T
     second = (rotation @ ephemeris.relative("second_moon", times).T).T
 
-    limit = 440_000.0
+    maximum_distance = max(
+        float(np.max(np.linalg.norm(real, axis=1))),
+        float(np.max(np.linalg.norm(second, axis=1))),
+    )
+    limit = max(440_000.0, 1.10 * maximum_distance)
+    z_limit = max(
+        150_000.0,
+        1.15 * float(np.max(np.abs(np.concatenate((real[:, 2], second[:, 2]))))),
+    )
+    is_binary = binary_architecture is not None
+    header = "Binary moons, one Earth" if is_binary else "Two moons, one Earth"
+    oblique_title = (
+        "Shared plane, mutual epicycles"
+        if is_binary and abs(binary_architecture.outer_orbit.inclination_deg) < 0.1
+        else "Oblique view reveals the tilt"
+    )
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     with plt.rc_context(
@@ -85,7 +102,7 @@ def build_orbit_portrait(
         top = figure.add_subplot(grid[0, 0])
         oblique = figure.add_subplot(grid[0, 1], projection="3d")
 
-        for radius in (100_000.0, 200_000.0, 300_000.0, 400_000.0):
+        for radius in np.linspace(0.25 * limit, 0.75 * limit, 3):
             top.add_patch(
                 Circle(
                     (0.0, 0.0),
@@ -107,7 +124,13 @@ def build_orbit_portrait(
             label="Second moon",
         )
         top.scatter(
-            real[0, 0], real[0, 1], s=105, color=REAL_BLUE, edgecolor="white", linewidth=1.3, zorder=6
+            real[0, 0],
+            real[0, 1],
+            s=105,
+            color=REAL_BLUE,
+            edgecolor="white",
+            linewidth=1.3,
+            zorder=6,
         )
         top.scatter(
             second[0, 0],
@@ -132,7 +155,9 @@ def build_orbit_portrait(
         top.set_xlim(-limit, limit)
         top.set_ylim(-limit, limit)
         top.set_aspect("equal")
-        top.set_title("Top-down on the ecliptic", loc="left", fontsize=15, fontweight="bold", pad=14)
+        top.set_title(
+            "Top-down on the ecliptic", loc="left", fontsize=15, fontweight="bold", pad=14
+        )
         top.set_xlabel("Ecliptic x (km)")
         top.set_ylabel("Ecliptic y (km)")
         top.spines[["top", "right", "bottom", "left"]].set_visible(False)
@@ -149,9 +174,7 @@ def build_orbit_portrait(
             line.set_linewidth(3.0)
 
         oblique.plot(real[:, 0], real[:, 1], real[:, 2], color=REAL_BLUE, linewidth=2.1)
-        oblique.plot(
-            second[:, 0], second[:, 1], second[:, 2], color=SECOND_ORANGE, linewidth=1.6
-        )
+        oblique.plot(second[:, 0], second[:, 1], second[:, 2], color=SECOND_ORANGE, linewidth=1.6)
         oblique.scatter(
             [real[0, 0]], [real[0, 1]], [real[0, 2]], s=80, color=REAL_BLUE, edgecolor="white"
         )
@@ -177,10 +200,16 @@ def build_orbit_portrait(
         )
         oblique.set_xlim(-limit, limit)
         oblique.set_ylim(-limit, limit)
-        oblique.set_zlim(-150_000.0, 150_000.0)
+        oblique.set_zlim(-z_limit, z_limit)
         oblique.set_box_aspect((1.0, 1.0, 0.42))
         oblique.view_init(elev=24.0, azim=-58.0)
-        oblique.set_title("Oblique view reveals the tilt", loc="left", fontsize=15, fontweight="bold", pad=14)
+        oblique.set_title(
+            oblique_title,
+            loc="left",
+            fontsize=15,
+            fontweight="bold",
+            pad=14,
+        )
         oblique.set_xlabel("x (km)", labelpad=8)
         oblique.set_ylabel("y (km)", labelpad=8)
         oblique.set_zlabel("z (km)", labelpad=5)
@@ -194,7 +223,7 @@ def build_orbit_portrait(
         figure.text(
             0.055,
             0.94,
-            "Two moons, one Earth",
+            header,
             fontsize=27,
             fontweight="bold",
             color=INK,
@@ -204,7 +233,10 @@ def build_orbit_portrait(
         figure.text(
             0.055,
             0.887,
-            "Actual coupled four-body trajectories · 10 July–10 August 2026 · distances to scale",
+            f"Coupled four-body trajectories"
+            f"{' · hierarchical pair' if is_binary else ''} · "
+            f"{elements.epoch_utc[:10]} · "
+            f"{days:g} days · distances to scale",
             fontsize=12.5,
             color=MUTED,
             ha="left",
@@ -212,9 +244,16 @@ def build_orbit_portrait(
         )
         callout = figure.text(
             0.975,
-            0.905,
-            "Real Moon  ≈ 384,000 km  ·  27.3 d\nSecond moon  ≈ 180,000 km  ·  8.79 d",
-            fontsize=10.5,
+            0.965,
+            f"Real Moon initial distance  {np.linalg.norm(real[0]):,.0f} km\n"
+            f"Second moon initial distance  {np.linalg.norm(second[0]):,.0f} km  ·  "
+            f"{elements.mass_kg / REAL_MOON_MASS_KG:.2f} lunar masses"
+            + (
+                f"\nInitial moon–moon separation  {np.linalg.norm(second[0] - real[0]):,.0f} km"
+                if is_binary
+                else ""
+            ),
+            fontsize=9.8,
             color=INK,
             ha="right",
             va="top",
@@ -224,8 +263,9 @@ def build_orbit_portrait(
         figure.text(
             0.055,
             0.035,
-            "Moon markers are enlarged for legibility; Earth and orbital distances share one physical scale. "
-            "Curves are Earth-relative positions in the mean ecliptic J2000 frame.",
+            "Moon markers are enlarged for legibility; Earth and orbital distances share "
+            "one physical scale. Curves are Earth-relative positions in the mean ecliptic "
+            "J2000 frame.",
             fontsize=9.2,
             color=MUTED,
             ha="left",

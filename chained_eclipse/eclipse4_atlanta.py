@@ -54,6 +54,7 @@ def build_atlanta_zoom(
         maximum_tt,
         "second_moon",
         position_provider=trajectory.position,
+        body_radius_km=elements.radius_km,
         half_window_hours=3.0,
         step_seconds=2.0,
     )
@@ -64,6 +65,7 @@ def build_atlanta_zoom(
         ATLANTA[1],
         "second_moon",
         position_provider=trajectory.position,
+        body_radius_km=elements.radius_km,
         search_half_window_hours=4.0,
         bracket_step_seconds=10.0,
     )

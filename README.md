@@ -64,6 +64,151 @@ Large generated artifacts are intentionally excluded from Git history. The
 reference movies and executed-run bundle are attached to the
 [latest GitHub release](https://github.com/wiyth00/chained-eclipse-simulator/releases/latest).
 
+## Distant giant-moon scenario
+
+`config/distant_giant.yaml` replaces the 838 km moon at 180,000 km with a
+Mercury-sized body whose radius and orbit are both scaled by three:
+
+| Quantity | Baseline second moon | Distant giant |
+|---|---:|---:|
+| Radius | 838 km | 2,514 km |
+| Semimajor axis | 180,000 km | 540,000 km |
+| Perigee | 172,800 km | 518,400 km |
+| Mass at 3,344 kg/m³ | 8.243 × 10²¹ kg | 2.226 × 10²³ kg |
+| Mass in real Moons | 0.112 | 3.031 |
+| Geocentric angular diameter at perigee | 0.5557° | 0.5557° |
+| Restricted-model period | 8.80 days | 45.71 days |
+| Massive two-body period | 8.79 days | 44.88 days |
+
+The optical scaling is exact from Earth's center because angular radius depends
+on `radius / distance`. A surface observer sees a small parallax difference
+because Earth's own radius is not scaled. At constant density, mass grows as
+the cube of the scale factor. The leading tide term `mass / distance³`
+therefore stays almost unchanged even though the new moon is 27 times as
+massive.
+
+The dynamics do not share that symmetry. The giant moves the Earth–giant
+barycenter about 19,401 km from Earth's center, well outside Earth, and its
+initial separation from the real Moon is only about 1.32 mutual Hill radii.
+That is a strong instability warning; the restricted eclipse design can still
+construct the geometry, but the coupled REBOUND run decides whether the
+counterfactual survives.
+
+The saved solved orientation in `config/distant_giant_optimized.yaml` produces
+two totalities at 65.2235° N, 25.2419° W on 2026-08-12. The real Moon reaches
+maximum at 17:45:56.542 UTC and the giant moon at 17:57:58.743 UTC, a
+12 min 2.2 s gap. Giant-moon totality lasts 393.9 s (6 min 33.9 s) at that
+site. The totality intervals are distinct, although the long partial phases
+overlap.
+
+That 12-minute chain is an optics-first restricted-model design. It does not
+survive when the giant's full mass is coupled from the July epoch. In the
+four-body run, the giant produces a 830.3 s total eclipse near 33.4391° N,
+78.5684° W on August 9 at 17:35:46 UTC. The perturbed real Moon produces its
+own 338.9 s total eclipse near 49.3235° N, 41.4470° E on August 10 at
+10:47:55 UTC. The gap is 17 h 12 min 9 s, so the coupled system no longer
+qualifies as a chained eclipse.
+
+The 10-year Newtonian four-body stability attempt does not make it through
+year one. The moons' osculating radial ranges cross; they pass within about
+16,192 km after 0.1002 years, and the real Moon crosses the modeled
+Earth-system ejection boundary after 0.6977 years. This is a clean numerical
+failure, not integration noise: the maximum relative energy error is
+`7.9e-16`. The result is specific to the project's baseline coupled force model,
+which omits major planets, Earth J2, tides, relativity, and lunar figure terms,
+but those refinements are not plausibly large enough to rescue such a tightly
+packed massive pair.
+
+Inspect either constant-density physics or a fixed-mass optical control:
+
+```bash
+uv run chained-eclipse-moon-scaling --scale-factor 3
+uv run chained-eclipse-moon-scaling --scale-factor 3 --mass-mode fixed-mass
+```
+
+Design the giant-moon eclipse into a separate output directory, without
+replacing the checked-in baseline orbit:
+
+```bash
+uv run chained-eclipse --mode design \
+  --config config/distant_giant.yaml \
+  --output outputs/distant_giant
+
+uv run chained-eclipse --mode stability \
+  --config config/distant_giant.yaml \
+  --output outputs/distant_giant \
+  --stability-years 10
+```
+
+## Bound binary-moon solution
+
+`config/bound_binary_giant.yaml` keeps the Mercury-sized moon and its
+approximately solar-sized appearance, but changes the topology. The moons no
+longer follow neighboring independent Earth orbits. Instead they form a tight
+binary whose barycenter orbits Earth:
+
+For circular coplanar independent orbits, the `2√3` mutual-Hill screen would
+force this giant moon either inside about 149,071 km or outside about
+991,228 km while the real Moon remains near 384,400 km. The outer solution is
+beyond the roughly 744,465 km prograde solar-stability limit; the inner
+solution makes the giant enormous in the sky. The binary hierarchy avoids
+both conflicts.
+
+| Quantity | Bound value | Why it matters |
+|---|---:|---|
+| Moon-pair barycenter semimajor axis | 500,000 km | 0.329 of the Earth-system Hill radius |
+| Outer eccentricity and period | 0.01; 39.751 days | Keeps the pair well inside the prograde solar stability zone |
+| Mutual semimajor axis | 40,000 km | Small compared with the binary's Hill region |
+| Mutual eccentricity and period | 0.01; 4.139 days | Avoids both collision and weak binding |
+| Binary Hill radius at outer periapsis | 126,069 km | Mutual apoapsis is only 0.320 of this radius |
+| Hierarchy ratio | 12.375 | Exceeds the 9.552 Mardling–Aarseth screen |
+| Initial minimum surface gap | 35,349 km | Safely outside physical contact |
+| Giant apparent diameter range | 0.559–0.594° | Still comparable to the Sun |
+| Real-Moon apparent diameter range | 0.372–0.429° | Usually too small for totality |
+
+In the executed 1,000-year Newtonian four-body integration, both nested orbits
+remain bound. The moon–moon separation never falls below 36,215 km, the mutual
+eccentricity remains below 0.120, and the outer eccentricity remains below
+0.065. Maximum relative energy error is `1.2e-15`. Individual Earth-centred
+moon elements look violently corrugated because each moon carries the
+4.14-day binary motion; stability is therefore judged from the Jacobi mutual
+orbit and the moon-pair barycenter orbit.
+
+For visual spectacle the saved case places both nested orbits in the ecliptic.
+That coplanarity is not what supplies the binding, but it makes eclipses
+frequent. From 2026-07-10 through 2027-07-10 the coupled model finds eight
+annular real-Moon eclipses and eight total giant-moon eclipses, including six
+pairs whose global maxima are within 12 hours. On 2027-06-22 their central
+tracks pass within about 1.6 km, with the global maxima 2 h 48 min apart.
+
+This is an alternate initial Solar System, not a continuation of the observed
+Moon. The real Moon is deliberately moved from its DE440s state into the
+synthetic binary at the epoch. The 1,000-year screen omits tides, Earth J2,
+major planets, relativity, and lunar figure terms, so it establishes
+short-to-intermediate-term gravitational boundedness rather than formation
+plausibility or billion-year tidal survival.
+
+```bash
+uv run chained-eclipse-moon-architecture \
+  --config config/bound_binary_giant.yaml
+
+uv run chained-eclipse --mode stability \
+  --config config/bound_binary_giant.yaml \
+  --output outputs/bound_binary_giant \
+  --stability-years 1000
+
+uv run chained-eclipse-coupled \
+  --config config/bound_binary_giant.yaml \
+  --start 2026-07-10T00:00:00Z \
+  --end 2027-07-10T00:00:00Z \
+  --output-dir outputs/bound_binary_giant/coupled
+
+uv run chained-eclipse-orbits \
+  --config config/bound_binary_giant.yaml \
+  --output outputs/bound_binary_giant/orbits/binary_moon_orbits.png \
+  --days 50
+```
+
 ## Reproducible modes
 
 ```bash
@@ -87,6 +232,21 @@ reference movies and executed-run bundle are attached to the
 # Render the detailed equirectangular shadow-footprint movie.
 .venv/bin/python -m chained_eclipse.animation_2d \
   --output outputs/animations/chained_eclipse_20260812_2d_map.mp4
+
+# Render the flat world-map preview for the bound binary-moon scenario.
+.venv/bin/python -m chained_eclipse.coupled_animation_2d \
+  --results outputs/bound_binary_giant/coupled/coupled_eclipses.json \
+  --config config/bound_binary_giant.yaml \
+  --pair-index 5 \
+  --output outputs/bound_binary_giant/animations/20270622_world_map.mp4
+
+# Follow both apparent lunar disks through Atlanta's twelve-hour partial phase.
+.venv/bin/python -m chained_eclipse.atlanta_timelapse \
+  --output outputs/bound_binary_giant/animations/20270622_atlanta_geometry.mp4
+
+# Watch the August 2026 Pacific total-at-sunrise / annular-at-noon double eclipse.
+.venv/bin/python -m chained_eclipse.pacific_double_timelapse \
+  --output outputs/bound_binary_giant/animations/20260821_pacific_double.mp4
 ```
 
 ## 3-D animation
@@ -109,6 +269,23 @@ centerline trails, Earth day/night shading, and the common observing site over
 detailed Natural Earth 50 m coastlines and borders.  The blue and orange
 footprints can overlap because the two partial phases genuinely overlap even
 though the two periods of totality at the common site are separate.
+
+The coupled world-map command applies the same topocentric calculation to the
+stable binary-moon architecture.  Its default quick-look render spans both
+global events on June 22–23, 2027: blue is the real Moon, orange is the giant
+moon, faint color shows each eclipse's full reach, and saturated color is the
+instantaneous moving footprint.
+
+The Atlanta timelapse holds the apparent Sun fixed while both lunar disks move
+at their exact topocentric angular sizes.  It includes the full and close solar
+fields, accumulated center trails, separate and combined obscuration, and a
+timeline for the nested real- and giant-moon partial phases.
+
+The Pacific double-eclipse timelapse adds a horizon-aware solar path.  It begins
+with the giant moon's eclipse below the horizon, slows through ten minutes of
+sunrise totality, crosses the clear-morning interval, then slows again through
+the real Moon's nearly 24-minute annular phase near noon.  The clock uses
+UTC+12 for the open-ocean common site.
 
 ## Later standalone second-moon eclipses
 
@@ -213,6 +390,21 @@ rates respond in opposite directions. Long-range ground coordinates remain
 conditional because this baseline catalog omits tides, major planets, Earth
 J2, relativity, and a self-consistent alternate-Earth rotation history.
 
+The bound binary-giant architecture can be extended to a century with the same
+one-hour trajectory and ten-minute detector cadences:
+
+```bash
+.venv/bin/python -m chained_eclipse.eclipse_climate \
+  --start 2026-07-10T00:00:00Z \
+  --end 2126-07-10T00:00:00Z \
+  --config config/bound_binary_giant.yaml \
+  --output-dir outputs/bound_binary_giant/eclipse_climate_100y
+```
+
+This mode preserves the hierarchical binary initial conditions instead of
+silently converting the two moons back to independent Earth-centered orbits.
+Its century catalog and annual tables are written beside the plot.
+
 ## Enhanced dynamics mode
 
 The enhanced climate run keeps the same optimized epoch state but replaces the
@@ -264,18 +456,27 @@ subpoints, distances, individual amplitudes, bulge alignment, and global extrema
 ### Differential Earth attitude
 
 Ground longitude cannot remain tied to the real Earth's rotation after adding
-a massive second moon. The enhanced trajectory therefore performs two matched
+a massive second moon. The enhanced trajectory therefore performs two
 integrations:
 
-1. the full system with the second moon's calculated mass; and
-2. a control with the same epoch, planets, J2, `gr_full`, and `tides_spin`, but
-   with the second moon's mass set to zero.
+1. the full alternate system, including a configured bound binary-moon
+   architecture when present; and
+2. a real-Solar-System control with the same epoch, planets, J2, `gr_full`, and
+   `tides_spin`, with the second moon massless and the real Moon initialized
+   from DE440.
 
 The difference in their integrated Earth spin phase and spin-pole direction is
 composed onto Skyfield's standard ITRS orientation. This retains the real-Earth
 UT1/precession/nutation model as the zero-order reference while adding only the
 counterfactual perturbation attributed to the second moon. It is a differential
 attitude model, not a newly fitted future Earth-orientation series.
+
+The Earth tide is the REBOUNDx vector constant-time-lag model, calibrated to
+the present real-Moon recession rate. Both moons and the Sun raise tides on
+Earth and exchange angular momentum with its evolving spin vector. Earth J2
+acts on every active body, but its axis is held fixed: J2 changes the orbits
+and eclipse geometry but this model does not yet apply the equal-and-opposite
+J2 figure torque to Earth's spin.
 
 ### Run, map, and compare
 
@@ -285,6 +486,15 @@ Generate the enhanced 2026–2056 catalog and climate plot:
 .venv/bin/python -m chained_eclipse.eclipse_climate \
   --dynamics-model enhanced \
   --output-dir outputs/coupled/eclipse_climate_30y_enhanced
+```
+
+Run the same enhanced stack for the stable giant/real-Moon binary:
+
+```bash
+.venv/bin/python -m chained_eclipse.eclipse_climate \
+  --config config/bound_binary_giant.yaml \
+  --dynamics-model enhanced \
+  --output-dir outputs/bound_binary_giant/eclipse_climate_30y_enhanced
 ```
 
 Recompute the standout total-eclipse tracks with that same enhanced trajectory:

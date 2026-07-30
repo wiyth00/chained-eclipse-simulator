@@ -56,11 +56,21 @@ def mean_motion_rad_s(semimajor_axis_km: float) -> float:
     return float(np.sqrt(MU_EARTH_KM3_S2 / semimajor_axis_km**3))
 
 
-def elements_to_state(elements: OrbitalElements) -> np.ndarray:
-    """Convert mean J2000 ecliptic elements to an Earth-centred ICRF state."""
+def elements_to_state(
+    elements: OrbitalElements,
+    gravitational_parameter_km3_s2: float = MU_EARTH_KM3_S2,
+) -> np.ndarray:
+    """Convert mean J2000 ecliptic elements to an ICRF relative state.
+
+    The default gravitational parameter preserves the original Earth-centred
+    convention.  Supplying another positive value makes the same conversion
+    usable for Jacobi orbits such as a binary-moon mutual orbit.
+    """
 
     a = elements.semimajor_axis_km
     e = elements.eccentricity
+    if not np.isfinite(gravitational_parameter_km3_s2) or gravitational_parameter_km3_s2 <= 0.0:
+        raise ValueError("gravitational_parameter_km3_s2 must be finite and positive")
     inc = np.radians(elements.inclination_deg)
     node = np.radians(elements.longitude_ascending_node_deg)
     argp = np.radians(elements.argument_periapsis_deg)
@@ -69,7 +79,8 @@ def elements_to_state(elements: OrbitalElements) -> np.ndarray:
     radius = a * (1.0 - e * np.cos(ecc))
     position_pf = np.asarray((a * (np.cos(ecc) - e), a * np.sqrt(1.0 - e * e) * np.sin(ecc), 0.0))
     velocity_pf = (
-        np.sqrt(MU_EARTH_KM3_S2 * a) / radius
+        np.sqrt(gravitational_parameter_km3_s2 * a)
+        / radius
         * np.asarray((-np.sin(ecc), np.sqrt(1.0 - e * e) * np.cos(ecc), 0.0))
     )
 
@@ -114,14 +125,17 @@ def state_to_elements(state_icrf: np.ndarray, *, epoch_utc: str) -> OrbitalEleme
         argp = float(
             np.mod(
                 np.arctan2(
-                    np.dot(np.cross(node_vector, eccentricity_vector), h) / (node_norm * eccentricity * h_norm),
+                    np.dot(np.cross(node_vector, eccentricity_vector), h)
+                    / (node_norm * eccentricity * h_norm),
                     np.dot(node_vector, eccentricity_vector) / (node_norm * eccentricity),
                 ),
                 2.0 * np.pi,
             )
         )
     elif eccentricity > 1e-12:
-        argp = float(np.mod(np.arctan2(eccentricity_vector[1], eccentricity_vector[0]), 2.0 * np.pi))
+        argp = float(
+            np.mod(np.arctan2(eccentricity_vector[1], eccentricity_vector[0]), 2.0 * np.pi)
+        )
     else:
         argp = 0.0
 
@@ -133,7 +147,9 @@ def state_to_elements(state_icrf: np.ndarray, *, epoch_utc: str) -> OrbitalEleme
             np.sqrt(1.0 - eccentricity) * np.sin(true_anomaly / 2.0),
             np.sqrt(1.0 + eccentricity) * np.cos(true_anomaly / 2.0),
         )
-        mean_anomaly = float(np.mod(eccentric_anomaly - eccentricity * np.sin(eccentric_anomaly), 2.0 * np.pi))
+        mean_anomaly = float(
+            np.mod(eccentric_anomaly - eccentricity * np.sin(eccentric_anomaly), 2.0 * np.pi)
+        )
     else:
         mean_anomaly = 0.0
     return OrbitalElements(
@@ -147,9 +163,7 @@ def state_to_elements(state_icrf: np.ndarray, *, epoch_utc: str) -> OrbitalEleme
     )
 
 
-def propagate_two_body(
-    elements: OrbitalElements, delta_seconds: float | np.ndarray
-) -> np.ndarray:
+def propagate_two_body(elements: OrbitalElements, delta_seconds: float | np.ndarray) -> np.ndarray:
     """Fast analytic propagation used only by the coarse design stage."""
 
     delta = np.asarray(delta_seconds, dtype=float)
@@ -159,7 +173,10 @@ def propagate_two_body(
     if delta.ndim == 0:
         return elements_to_state(replace(elements, mean_anomaly_deg=float(mean_deg % 360.0)))
     return np.vstack(
-        [elements_to_state(replace(elements, mean_anomaly_deg=float(value % 360.0))) for value in mean_deg]
+        [
+            elements_to_state(replace(elements, mean_anomaly_deg=float(value % 360.0)))
+            for value in mean_deg
+        ]
     )
 
 
@@ -216,7 +233,9 @@ def _restricted_acceleration(
         r2 = norm_r * norm_r
         factor = 1.5 * EARTH_J2 * MU_EARTH_KM3_S2 * WGS84_A_KM**2 / norm_r**5
         z_ratio = 5.0 * z * z / r2
-        acceleration += factor * np.asarray((x * (z_ratio - 1.0), y * (z_ratio - 1.0), z * (z_ratio - 3.0)))
+        acceleration += factor * np.asarray(
+            (x * (z_ratio - 1.0), y * (z_ratio - 1.0), z * (z_ratio - 3.0))
+        )
     return np.concatenate((v, acceleration))
 
 
@@ -238,7 +257,9 @@ def integrate_restricted(
     if start_tt_jd is None:
         start_tt_jd = epoch_tt_jd
     if abs(start_tt_jd - epoch_tt_jd) > 1e-12:
-        raise ValueError("elements are defined at the epoch; non-epoch integration starts are unsupported")
+        raise ValueError(
+            "elements are defined at the epoch; non-epoch integration starts are unsupported"
+        )
     end_tt_jd = float(end_tt_jd)
     if perturbers is None:
         perturbers = EphemerisInterpolator(context, epoch_tt_jd, end_tt_jd)
@@ -281,6 +302,8 @@ def integrate_restricted(
             "ephemeris_interpolation_hours": float(np.diff(perturbers.tt_jd[:2])[0] * 24.0),
             "nfev": int(solution.nfev),
         },
+        second_moon_radius_km=elements.radius_km,
+        second_moon_mass_kg=elements.mass_kg,
     )
 
 
@@ -297,10 +320,14 @@ def target_position_for_observer(
     location = wgs84.latlon(latitude_deg, longitude_deg)
     observer_position = np.asarray(location.at(time).position.km, dtype=float)
     observer = context.earth + location
-    sun_vector = np.asarray(observer.at(time).observe(context.sun).apparent().position.km, dtype=float)
+    sun_vector = np.asarray(
+        observer.at(time).observe(context.sun).apparent().position.km, dtype=float
+    )
     direction = sun_vector / np.linalg.norm(sun_vector)
     dot = float(np.dot(observer_position, direction))
-    discriminant = dot * dot + geocentric_radius_km**2 - float(np.dot(observer_position, observer_position))
+    discriminant = (
+        dot * dot + geocentric_radius_km**2 - float(np.dot(observer_position, observer_position))
+    )
     if discriminant <= 0.0:
         raise ValueError("target Sun ray does not intersect requested geocentric radius")
     distance = -dot + np.sqrt(discriminant)
@@ -335,13 +362,23 @@ def perigee_state_for_position(
     )
     best_state = None
     for node in candidates:
-        normal = np.asarray((np.sin(inclination) * np.sin(node), -np.sin(inclination) * np.cos(node), np.cos(inclination)))
+        normal = np.asarray(
+            (
+                np.sin(inclination) * np.sin(node),
+                -np.sin(inclination) * np.cos(node),
+                np.cos(inclination),
+            )
+        )
         r_hat = position_ecl / radius
         velocity_hat = np.cross(normal, r_hat)
         velocity_hat /= np.linalg.norm(velocity_hat)
-        speed = np.sqrt(MU_EARTH_KM3_S2 * (1.0 + eccentricity) / (semimajor_axis_km * (1.0 - eccentricity)))
+        speed = np.sqrt(
+            MU_EARTH_KM3_S2 * (1.0 + eccentricity) / (semimajor_axis_km * (1.0 - eccentricity))
+        )
         state_ecl = np.concatenate((position_ecl, speed * velocity_hat))
-        state_icrf = np.concatenate((ECLIPTIC_TO_ICRF @ state_ecl[:3], ECLIPTIC_TO_ICRF @ state_ecl[3:]))
+        state_icrf = np.concatenate(
+            (ECLIPTIC_TO_ICRF @ state_ecl[:3], ECLIPTIC_TO_ICRF @ state_ecl[3:])
+        )
         if best_state is None:
             best_state = state_icrf
     assert best_state is not None
@@ -504,10 +541,14 @@ def refine_design_shooting(
         max_step_seconds=1_800.0,
     )
     error = np.linalg.norm(trajectory.position(target_tt_jd) - target)
-    return refined, trajectory, {
-        "success": bool(fit.success),
-        "shooting_calls": float(calls),
-        "target_position_error_km": float(error),
-        "cost": float(fit.cost),
-        "optimality": float(fit.optimality),
-    }
+    return (
+        refined,
+        trajectory,
+        {
+            "success": bool(fit.success),
+            "shooting_calls": float(calls),
+            "target_position_error_km": float(error),
+            "cost": float(fit.cost),
+            "optimality": float(fit.optimality),
+        },
+    )

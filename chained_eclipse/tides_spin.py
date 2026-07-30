@@ -46,6 +46,7 @@ from .constants import (
     SECONDS_PER_DAY,
     WGS84_A_KM,
 )
+from .models import OrbitalElements
 
 
 EARTH_SIDEREAL_DAY_S = 86_164.0905
@@ -1140,10 +1141,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--years", type=float, default=30.0)
     parser.add_argument("--sample-days", type=float, default=30.0)
     parser.add_argument("--dpi", type=int, default=180)
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Optional baseline or optimized config supplying second-moon mass and orbit.",
+    )
     arguments = parser.parse_args(argv)
+    config_kwargs: dict[str, Any] = {
+        "years": arguments.years,
+        "sample_interval_days": arguments.sample_days,
+    }
+    if arguments.config is not None:
+        from .moon_scaling import load_elements
+
+        elements: OrbitalElements = load_elements(arguments.config)
+        config_kwargs["second_moon"] = TidalBody(
+            "second_moon",
+            float(elements.mass_kg),
+            elements.semimajor_axis_km,
+        )
     config = SecularTidalSpinConfig(
-        years=arguments.years,
-        sample_interval_days=arguments.sample_days,
+        **config_kwargs,
     )
     payload = write_secular_tidal_audit(
         arguments.output_dir,

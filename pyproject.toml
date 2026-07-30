@@ -53,6 +53,9 @@ chained-eclipse-standalone = "chained_eclipse.standalone:main"
 chained-eclipse-ground-track = "chained_eclipse.standalone_map:main"
 chained-eclipse-coupled = "chained_eclipse.coupled_eclipse:main"
 chained-eclipse-coupled-figures = "chained_eclipse.coupled_figures:main"
+chained-eclipse-coupled-map-animate = "chained_eclipse.coupled_animation_2d:main"
+chained-eclipse-atlanta-timelapse = "chained_eclipse.atlanta_timelapse:main"
+chained-eclipse-pacific-double = "chained_eclipse.pacific_double_timelapse:main"
 chained-eclipse-lunar = "chained_eclipse.lunar_eclipse:main"
 chained-eclipse-orbits = "chained_eclipse.orbit_portrait:main"
 chained-eclipse-climate = "chained_eclipse.eclipse_climate:main"
@@ -61,6 +64,8 @@ chained-eclipse-enhanced-compare = "chained_eclipse.enhanced_comparison:main"
 chained-eclipse-enhanced-report = "chained_eclipse.enhanced_report:main"
 chained-eclipse-tidal-audit = "chained_eclipse.tides_spin:main"
 chained-eclipse-tide-visualization = "chained_eclipse.tide_visualization:main"
+chained-eclipse-moon-scaling = "chained_eclipse.moon_scaling:main"
+chained-eclipse-moon-architecture = "chained_eclipse.moon_architecture:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["chained_eclipse"]

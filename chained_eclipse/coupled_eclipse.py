@@ -47,16 +47,26 @@ from .ephemeris import (
     time_iso_utc,
 )
 from .models import OrbitalElements
+from .moon_architecture import (
+    BinaryMoonArchitecture,
+    architecture_from_config,
+    elements_from_config,
+)
 from .stability import build_coupled_simulation
 
 
 BodyName = Literal["real_moon", "second_moon"]
-BODY_RADIUS = {
-    "real_moon": REAL_MOON_RADIUS_KM,
-    "second_moon": SECOND_MOON_RADIUS_KM,
-}
 BODY_LABEL = {"real_moon": "real Moon", "second_moon": "second moon"}
 PARTICLE_NAMES = ("sun", "earth", "real_moon", "second_moon")
+
+
+def body_radius_km(ephemeris: CoupledEphemeris, body: BodyName) -> float:
+    """Return the configured physical radius for an eclipse-causing body."""
+
+    if body == "real_moon":
+        return REAL_MOON_RADIUS_KM
+    elements = getattr(ephemeris, "elements", None)
+    return float(getattr(elements, "radius_km", SECOND_MOON_RADIUS_KM))
 
 
 @dataclass(slots=True)
@@ -113,11 +123,13 @@ class CoupledEphemeris:
         *,
         sample_step_seconds: float = 600.0,
         ias15_epsilon: float = 1.0e-10,
+        binary_architecture: BinaryMoonArchitecture | None = None,
     ) -> None:
         if sample_step_seconds <= 0.0:
             raise ValueError("sample_step_seconds must be positive")
         self.context = context
         self.elements = elements
+        self.binary_architecture = binary_architecture
         self.epoch_tt_jd = float(context.time_utc(elements.epoch_utc).tt)
         self.end_tt_jd = float(context.time_utc(end_utc).tt)
         duration_seconds = (self.end_tt_jd - self.epoch_tt_jd) * SECONDS_PER_DAY
@@ -127,7 +139,10 @@ class CoupledEphemeris:
             sample_step_seconds,
         )
         simulation, metadata = build_coupled_simulation(
-            context, elements, ias15_epsilon=ias15_epsilon
+            context,
+            elements,
+            binary_architecture=binary_architecture,
+            ias15_epsilon=ias15_epsilon,
         )
         initial_energy = float(simulation.energy())
         positions = np.empty((len(self.seconds), len(PARTICLE_NAMES), 3), dtype=float)
@@ -223,9 +238,7 @@ def _earth_rotation_matrix(
     else:
         time = ephemeris.time(tt_jd)
         offset = float(_earth_longitude_offset_deg(ephemeris, tt_jd))
-        rotation = _rotation_z(np.radians(offset)) @ np.asarray(
-            itrs.rotation_at(time), dtype=float
-        )
+        rotation = _rotation_z(np.radians(offset)) @ np.asarray(itrs.rotation_at(time), dtype=float)
     if rotation.shape != (3, 3) or not np.all(np.isfinite(rotation)):
         raise ValueError("Earth rotation provider must return a finite 3x3 matrix")
     return rotation
@@ -243,9 +256,7 @@ def _geodetic_observer_icrf_km(
     longitude = np.radians(longitude_deg)
     height_km = altitude_m / 1_000.0
     sin_latitude = np.sin(latitude)
-    prime_vertical = WGS84_A_KM / np.sqrt(
-        1.0 - WGS84_E2 * sin_latitude * sin_latitude
-    )
+    prime_vertical = WGS84_A_KM / np.sqrt(1.0 - WGS84_E2 * sin_latitude * sin_latitude)
     ecef = np.asarray(
         (
             (prime_vertical + height_km) * np.cos(latitude) * np.cos(longitude),
@@ -285,7 +296,7 @@ def coupled_shadow_state(
     earth_from_moon = -moon
     axial = float(np.dot(earth_from_moon, axis))
     miss = float(np.linalg.norm(earth_from_moon - axial * axis))
-    radius = BODY_RADIUS[body]
+    radius = body_radius_km(ephemeris, body)
     penumbra_angle = np.arcsin((SUN_RADIUS_KM + radius) / distance)
     core_angle = np.arcsin((SUN_RADIUS_KM - radius) / distance)
     penumbra = radius / np.cos(penumbra_angle) + axial * np.tan(penumbra_angle)
@@ -319,10 +330,9 @@ def coupled_central_point(
     if intersections is None:
         return None
     latitude, longitude, height = itrs_to_geodetic(intersections[0])
-    angle = np.arcsin(
-        (SUN_RADIUS_KM - BODY_RADIUS[body]) / state.sun_moon_distance_km
-    )
-    core = BODY_RADIUS[body] / np.cos(angle) - intersections[2][0] * np.tan(angle)
+    radius = body_radius_km(ephemeris, body)
+    angle = np.arcsin((SUN_RADIUS_KM - radius) / state.sun_moon_distance_km)
+    core = radius / np.cos(angle) - intersections[2][0] * np.tan(angle)
     return latitude, longitude, height, float(core)
 
 
@@ -354,16 +364,12 @@ def coupled_apparent_geometry(
         longitude_deg,
         altitude_m,
     )
-    sun_vector = _retarded_topocentric_vector(
-        ephemeris, "sun", tt_jd, observer
-    )
-    moon_vector = _retarded_topocentric_vector(
-        ephemeris, body, tt_jd, observer
-    )
+    sun_vector = _retarded_topocentric_vector(ephemeris, "sun", tt_jd, observer)
+    moon_vector = _retarded_topocentric_vector(ephemeris, body, tt_jd, observer)
     sun_distance = float(np.linalg.norm(sun_vector))
     moon_distance = float(np.linalg.norm(moon_vector))
     sun_radius = float(np.arcsin(SUN_RADIUS_KM / sun_distance))
-    moon_radius = float(np.arcsin(BODY_RADIUS[body] / moon_distance))
+    moon_radius = float(np.arcsin(body_radius_km(ephemeris, body) / moon_distance))
     separation = angular_separation(sun_vector, moon_vector)
     magnitude = max(0.0, (sun_radius + moon_radius - separation) / (2.0 * sun_radius))
     obscuration = disk_overlap_fraction(separation, sun_radius, moon_radius)
@@ -396,6 +402,109 @@ def coupled_apparent_geometry(
     )
 
 
+def coupled_solar_altaz(
+    ephemeris: CoupledEphemeris,
+    tt_jd: float,
+    latitude_deg: float,
+    longitude_deg: float,
+    altitude_m: float = 0.0,
+) -> tuple[float, float]:
+    """Return the apparent solar altitude and azimuth for one observer.
+
+    Azimuth is measured eastward from true north.  The calculation uses the
+    same rotating WGS84 observer and retarded solar vector as the coupled
+    eclipse geometry.
+    """
+
+    rotation = _earth_rotation_matrix(ephemeris, tt_jd)
+    observer = _geodetic_observer_icrf_km(
+        rotation,
+        latitude_deg,
+        longitude_deg,
+        altitude_m,
+    )
+    sun_vector = _retarded_topocentric_vector(ephemeris, "sun", tt_jd, observer)
+    sun_ecef = rotation @ sun_vector
+    sun_ecef /= np.linalg.norm(sun_ecef)
+    latitude = np.radians(latitude_deg)
+    longitude = np.radians(longitude_deg)
+    east = np.asarray((-np.sin(longitude), np.cos(longitude), 0.0))
+    north = np.asarray(
+        (
+            -np.sin(latitude) * np.cos(longitude),
+            -np.sin(latitude) * np.sin(longitude),
+            np.cos(latitude),
+        )
+    )
+    up = np.asarray(
+        (
+            np.cos(latitude) * np.cos(longitude),
+            np.cos(latitude) * np.sin(longitude),
+            np.sin(latitude),
+        )
+    )
+    altitude = float(np.degrees(np.arcsin(np.clip(np.dot(up, sun_ecef), -1.0, 1.0))))
+    azimuth = float(
+        np.degrees(np.arctan2(np.dot(east, sun_ecef), np.dot(north, sun_ecef))) % 360.0
+    )
+    return altitude, azimuth
+
+
+def coupled_sky_plane_disks(
+    ephemeris: CoupledEphemeris,
+    tt_jd: float,
+    latitude_deg: float,
+    longitude_deg: float,
+    altitude_m: float = 0.0,
+) -> dict[str, dict[str, float]]:
+    """Return apparent disk centers and radii on the local celestial sky.
+
+    Centers use a gnomonic projection about the apparent Sun. ``east_deg`` is
+    positive toward celestial east and ``north_deg`` toward celestial north.
+    Light-time and topocentric parallax match :func:`coupled_apparent_geometry`.
+    """
+
+    rotation = _earth_rotation_matrix(ephemeris, tt_jd)
+    observer = _geodetic_observer_icrf_km(
+        rotation,
+        latitude_deg,
+        longitude_deg,
+        altitude_m,
+    )
+    vectors = {
+        name: _retarded_topocentric_vector(ephemeris, name, tt_jd, observer)
+        for name in ("sun", "real_moon", "second_moon")
+    }
+    directions = {name: vector / np.linalg.norm(vector) for name, vector in vectors.items()}
+    sun_direction = directions["sun"]
+    celestial_pole = np.asarray((0.0, 0.0, 1.0), dtype=float)
+    north = celestial_pole - np.dot(celestial_pole, sun_direction) * sun_direction
+    if np.linalg.norm(north) < 1.0e-12:
+        celestial_pole = np.asarray((0.0, 1.0, 0.0), dtype=float)
+        north = celestial_pole - np.dot(celestial_pole, sun_direction) * sun_direction
+    north /= np.linalg.norm(north)
+    east = np.cross(north, sun_direction)
+    east /= np.linalg.norm(east)
+    radii = {
+        "sun": SUN_RADIUS_KM,
+        "real_moon": REAL_MOON_RADIUS_KM,
+        "second_moon": body_radius_km(ephemeris, "second_moon"),
+    }
+    result: dict[str, dict[str, float]] = {}
+    for name in ("sun", "real_moon", "second_moon"):
+        direction = directions[name]
+        denominator = float(np.dot(direction, sun_direction))
+        result[name] = {
+            "east_deg": float(np.degrees(np.arctan2(np.dot(direction, east), denominator))),
+            "north_deg": float(np.degrees(np.arctan2(np.dot(direction, north), denominator))),
+            "angular_radius_deg": float(
+                np.degrees(np.arcsin(radii[name] / np.linalg.norm(vectors[name])))
+            ),
+            "distance_km": float(np.linalg.norm(vectors[name])),
+        }
+    return result
+
+
 def _maximum_surface_point(
     ephemeris: CoupledEphemeris,
     body: BodyName,
@@ -406,9 +515,7 @@ def _maximum_surface_point(
         return None
     central = coupled_central_point(ephemeris, body, tt_jd)
     if central is not None:
-        geometry = coupled_apparent_geometry(
-            ephemeris, body, tt_jd, central[0], central[1]
-        )
+        geometry = coupled_apparent_geometry(ephemeris, body, tt_jd, central[0], central[1])
         return central[0], central[1], geometry.magnitude
     initial = np.asarray(
         _closest_axis_surface_guess(
@@ -423,13 +530,12 @@ def _maximum_surface_point(
     def objective(coordinates: np.ndarray) -> float:
         latitude = float(np.clip(coordinates[0], -90.0, 90.0))
         longitude = float((coordinates[1] + 180.0) % 360.0 - 180.0)
-        geometry = coupled_apparent_geometry(
-            ephemeris, body, tt_jd, latitude, longitude
-        )
+        geometry = coupled_apparent_geometry(ephemeris, body, tt_jd, latitude, longitude)
         horizon_penalty = max(0.0, -geometry.solar_altitude_deg) / 10.0
-        return geometry.separation_rad / (
-            geometry.sun_radius_rad + geometry.moon_radius_rad
-        ) + horizon_penalty
+        return (
+            geometry.separation_rad / (geometry.sun_radius_rad + geometry.moon_radius_rad)
+            + horizon_penalty
+        )
 
     result = minimize(
         objective,
@@ -439,9 +545,7 @@ def _maximum_surface_point(
     )
     latitude = float(np.clip(result.x[0], -90.0, 90.0))
     longitude = float((result.x[1] + 180.0) % 360.0 - 180.0)
-    geometry = coupled_apparent_geometry(
-        ephemeris, body, tt_jd, latitude, longitude
-    )
+    geometry = coupled_apparent_geometry(ephemeris, body, tt_jd, latitude, longitude)
     if geometry.magnitude <= 0.0 or geometry.solar_altitude_deg <= 0.0:
         return None
     return latitude, longitude, geometry.magnitude
@@ -506,9 +610,7 @@ def solve_coupled_local(
     def formatted(offset: float | None) -> str | None:
         if offset is None:
             return None
-        return time_iso_utc(
-            ephemeris.time(approximate_tt_jd + offset / SECONDS_PER_DAY)
-        )
+        return time_iso_utc(ephemeris.time(approximate_tt_jd + offset / SECONDS_PER_DAY))
 
     c1 = external_roots[0] if len(external_roots) >= 2 else None
     c4 = external_roots[-1] if len(external_roots) >= 2 else None
@@ -558,9 +660,7 @@ def generate_coupled_track(
     if step_seconds <= 0.0 or partial_step_seconds <= 0.0:
         raise ValueError("track sample steps must be positive")
     central_mode = coupled_central_point(ephemeris, body, center_tt_jd) is not None
-    sample_step = step_seconds if central_mode else max(
-        step_seconds, partial_step_seconds
-    )
+    sample_step = step_seconds if central_mode else max(step_seconds, partial_step_seconds)
     offsets = np.arange(
         -half_window_hours * 3_600.0,
         half_window_hours * 3_600.0 + sample_step,
@@ -577,9 +677,7 @@ def generate_coupled_track(
             if central is None:
                 continue
             latitude, longitude, _, core = central
-            geometry = coupled_apparent_geometry(
-                ephemeris, body, tt_jd, latitude, longitude
-            )
+            geometry = coupled_apparent_geometry(ephemeris, body, tt_jd, latitude, longitude)
             if geometry.solar_altitude_deg <= 0.0:
                 continue
         else:
@@ -625,8 +723,9 @@ def _vectorized_clearance(
     earth_from_moon = -moon_relative
     axial = np.sum(earth_from_moon * axis, axis=1)
     miss = np.linalg.norm(earth_from_moon - axial[:, None] * axis, axis=1)
-    angle = np.arcsin((SUN_RADIUS_KM + BODY_RADIUS[body]) / distance)
-    penumbra = BODY_RADIUS[body] / np.cos(angle) + axial * np.tan(angle)
+    radius = body_radius_km(ephemeris, body)
+    angle = np.arcsin((SUN_RADIUS_KM + radius) / distance)
+    penumbra = radius / np.cos(angle) + axial * np.tan(angle)
     return miss - (WGS84_A_KM + penumbra), axial > 0.0, miss
 
 
@@ -645,9 +744,7 @@ def scan_coupled_eclipses(
         end_tt + step_seconds / SECONDS_PER_DAY,
         step_seconds / SECONDS_PER_DAY,
     )
-    clearance, in_front, sampled_miss = _vectorized_clearance(
-        ephemeris, body, samples
-    )
+    clearance, in_front, sampled_miss = _vectorized_clearance(ephemeris, body, samples)
     inside = (clearance <= 0.0) & in_front
     starts = np.flatnonzero(inside & ~np.r_[False, inside[:-1]])
     ends = np.flatnonzero(inside & ~np.r_[inside[1:], False])
@@ -672,9 +769,7 @@ def scan_coupled_eclipses(
             float(samples[end_index + 1]),
             xtol=1e-11,
         )
-        sampled_index = start_index + int(
-            np.argmin(sampled_miss[start_index : end_index + 1])
-        )
+        sampled_index = start_index + int(np.argmin(sampled_miss[start_index : end_index + 1]))
         reference = float(samples[sampled_index])
 
         def miss_seconds(seconds: float) -> float:
@@ -700,15 +795,11 @@ def scan_coupled_eclipses(
         else:
             latitude, longitude, _, core = central
             kind = "total" if core > 0.0 else "annular"
-            track = generate_coupled_track(
-                ephemeris, body, maximum_tt, step_seconds=30.0
-            )
+            track = generate_coupled_track(ephemeris, body, maximum_tt, step_seconds=30.0)
             track_cores = track["signed_core_radius_km"]
             if len(track_cores) and np.min(track_cores) < 0.0 < np.max(track_cores):
                 kind = "hybrid"
-        local = solve_coupled_local(
-            ephemeris, body, maximum_tt, latitude, longitude
-        )
+        local = solve_coupled_local(ephemeris, body, maximum_tt, latitude, longitude)
         events.append(
             CoupledEvent(
                 body=BODY_LABEL[body],
@@ -751,19 +842,17 @@ def run_coupled_search(
 ) -> dict[str, object]:
     context = load_ephemeris(ephemeris_cache)
     payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
-    elements = OrbitalElements(**payload["orbital_elements"])
+    elements = elements_from_config(payload)
+    binary_architecture = architecture_from_config(payload)
     ephemeris = CoupledEphemeris(
         context,
         elements,
         end_utc,
         sample_step_seconds=sample_step_seconds,
+        binary_architecture=binary_architecture,
     )
-    real_events = scan_coupled_eclipses(
-        ephemeris, "real_moon", start_utc, end_utc
-    )
-    second_events = scan_coupled_eclipses(
-        ephemeris, "second_moon", start_utc, end_utc
-    )
+    real_events = scan_coupled_eclipses(ephemeris, "real_moon", start_utc, end_utc)
+    second_events = scan_coupled_eclipses(ephemeris, "second_moon", start_utc, end_utc)
     pairs: list[dict[str, object]] = []
     geod = Geod(ellps="WGS84")
     for real in real_events:
@@ -787,18 +876,20 @@ def run_coupled_search(
                 second_lon = float(second_track["longitude_deg"][second_index])
                 real_closest_tt = float(real_track["tt_jd"][real_index])
                 second_closest_tt = float(second_track["tt_jd"][second_index])
-                azimuth, _, distance_m = geod.inv(
-                    real_lon, real_lat, second_lon, second_lat
-                )
-                common_lon, common_lat, _ = geod.fwd(
-                    real_lon, real_lat, azimuth, distance_m / 2.0
-                )
+                azimuth, _, distance_m = geod.inv(real_lon, real_lat, second_lon, second_lat)
+                common_lon, common_lat, _ = geod.fwd(real_lon, real_lat, azimuth, distance_m / 2.0)
+                # A common surface site can encounter a shadow several hours
+                # before or after the corresponding geocentric axis maximum.
+                # Leave enough room to recover all four contacts for pairs
+                # whose global maxima are already separated by up to 12 h.
+                local_half_window_hours = max(6.0, separation_hours + 6.0)
                 real_local = solve_coupled_local(
                     ephemeris,
                     "real_moon",
                     real_tt,
                     common_lat,
                     common_lon,
+                    half_window_hours=local_half_window_hours,
                 )
                 second_local = solve_coupled_local(
                     ephemeris,
@@ -806,6 +897,7 @@ def run_coupled_search(
                     second_tt,
                     common_lat,
                     common_lon,
+                    half_window_hours=local_half_window_hours,
                 )
                 local_real_tt = float(context.time_utc(real_local.maximum_utc).tt)
                 local_second_tt = float(context.time_utc(second_local.maximum_utc).tt)
@@ -818,19 +910,14 @@ def run_coupled_search(
                     and local_separation_hours <= 12.0
                 )
                 at_least_one_local_total = (
-                    real_local.eclipse_type == "total"
-                    or second_local.eclipse_type == "total"
+                    real_local.eclipse_type == "total" or second_local.eclipse_type == "total"
                 )
-                at_least_one_global_total = (
-                    real.eclipse_type in {"total", "hybrid"}
-                    or second.eclipse_type in {"total", "hybrid"}
-                )
-                same_location = (
-                    both_visible_same_location and at_least_one_local_total
-                )
-                regional_500km = (
-                    track_distance <= 500.0 and at_least_one_global_total
-                )
+                at_least_one_global_total = real.eclipse_type in {
+                    "total",
+                    "hybrid",
+                } or second.eclipse_type in {"total", "hybrid"}
+                same_location = both_visible_same_location and at_least_one_local_total
+                regional_500km = track_distance <= 500.0 and at_least_one_global_total
                 pairs.append(
                     {
                         "real_maximum_utc": real.axis_maximum_utc,
@@ -850,16 +937,12 @@ def run_coupled_search(
                             else "central line"
                         ),
                         "real_closest_track_point": {
-                            "utc": time_iso_utc(
-                                ephemeris.time(real_closest_tt), places=3
-                            ),
+                            "utc": time_iso_utc(ephemeris.time(real_closest_tt), places=3),
                             "latitude_deg": real_lat,
                             "longitude_deg": real_lon,
                         },
                         "second_closest_track_point": {
-                            "utc": time_iso_utc(
-                                ephemeris.time(second_closest_tt), places=3
-                            ),
+                            "utc": time_iso_utc(ephemeris.time(second_closest_tt), places=3),
                             "latitude_deg": second_lat,
                             "longitude_deg": second_lon,
                         },
@@ -876,20 +959,15 @@ def run_coupled_search(
                         ),
                         "thresholds": {
                             "same_location_12h": same_location,
-                            "same_location_6h": same_location
-                            and local_separation_hours <= 6.0,
-                            "same_location_3h": same_location
-                            and local_separation_hours <= 3.0,
-                            "same_location_1h": same_location
-                            and local_separation_hours <= 1.0,
+                            "same_location_6h": same_location and local_separation_hours <= 6.0,
+                            "same_location_3h": same_location and local_separation_hours <= 3.0,
+                            "same_location_1h": same_location and local_separation_hours <= 1.0,
                             "track_1000km_12h": (
-                                track_distance <= 1_000.0
-                                and at_least_one_global_total
+                                track_distance <= 1_000.0 and at_least_one_global_total
                             ),
                             "track_500km_12h": regional_500km,
                             "track_100km_12h": (
-                                track_distance <= 100.0
-                                and at_least_one_global_total
+                                track_distance <= 100.0 and at_least_one_global_total
                             ),
                         },
                         "real_local": asdict(real_local),
@@ -902,6 +980,9 @@ def run_coupled_search(
         "start_utc": start_utc,
         "end_utc": end_utc,
         "initial_elements": elements.to_dict(),
+        "initial_architecture": (
+            None if binary_architecture is None else binary_architecture.to_dict()
+        ),
         "trajectory": ephemeris.metadata,
         "real_moon_event_count": len(real_events),
         "second_moon_event_count": len(second_events),

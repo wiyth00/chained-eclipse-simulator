@@ -13,6 +13,7 @@ from chained_eclipse.coupled_eclipse import (
     CoupledEphemeris,
     coupled_apparent_geometry,
     coupled_central_point,
+    coupled_sky_plane_disks,
     generate_coupled_track,
     scan_coupled_eclipses,
 )
@@ -45,9 +46,7 @@ def test_added_moon_backreaction_moves_the_2026_real_eclipse() -> None:
     )[0]
     assert control_event.axis_maximum_utc.startswith("2026-08-12T17:46")
 
-    coupled = CoupledEphemeris(
-        context, elements, end, sample_step_seconds=600.0
-    )
+    coupled = CoupledEphemeris(context, elements, end, sample_step_seconds=600.0)
     coupled_event = scan_coupled_eclipses(
         coupled,
         "real_moon",
@@ -72,9 +71,7 @@ def test_added_moon_backreaction_moves_the_2026_real_eclipse() -> None:
 def test_partial_eclipse_gets_a_maximum_surface_track() -> None:
     context = load_ephemeris(ROOT / "data" / "ephemeris")
     end = "2026-08-22T12:00:00Z"
-    coupled = CoupledEphemeris(
-        context, _elements(), end, sample_step_seconds=600.0
-    )
+    coupled = CoupledEphemeris(context, _elements(), end, sample_step_seconds=600.0)
     event = scan_coupled_eclipses(
         coupled,
         "second_moon",
@@ -101,9 +98,7 @@ def test_partial_eclipse_gets_a_maximum_surface_track() -> None:
 def test_earth_rotation_offset_shifts_longitude_without_changing_local_geometry() -> None:
     context = load_ephemeris(ROOT / "data" / "ephemeris")
     end = "2026-08-13T12:00:00Z"
-    baseline = CoupledEphemeris(
-        context, _elements(), end, sample_step_seconds=600.0
-    )
+    baseline = CoupledEphemeris(context, _elements(), end, sample_step_seconds=600.0)
     event = scan_coupled_eclipses(
         baseline,
         "real_moon",
@@ -150,4 +145,21 @@ def test_earth_rotation_offset_shifts_longitude_without_changing_local_geometry(
     )
     assert shifted_geometry.solar_altitude_deg == pytest.approx(
         baseline_geometry.solar_altitude_deg, abs=1.0e-10
+    )
+
+    disks = coupled_sky_plane_disks(
+        baseline,
+        maximum_tt,
+        baseline_point[0],
+        baseline_point[1],
+    )
+    assert disks["sun"]["east_deg"] == pytest.approx(0.0, abs=1.0e-14)
+    assert disks["sun"]["north_deg"] == pytest.approx(0.0, abs=1.0e-14)
+    sky_offset_deg = np.hypot(
+        disks["real_moon"]["east_deg"],
+        disks["real_moon"]["north_deg"],
+    )
+    assert sky_offset_deg == pytest.approx(
+        np.degrees(baseline_geometry.separation_rad),
+        rel=1.0e-4,
     )

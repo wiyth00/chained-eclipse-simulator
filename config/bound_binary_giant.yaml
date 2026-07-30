@@ -1,0 +1,62 @@
+scenario:
+  name: bound-binary-giant
+  description: >-
+    The real Moon and the constant-density Mercury-sized moon form a tight
+    binary. Their shared barycenter follows a prograde Earth orbit, so the two
+    moons exchange small epicycles instead of repeatedly scattering one another.
+  dynamical_goal: >-
+    Preserve the distant giant moon's roughly solar-sized appearance while
+    keeping both moons bound in the fully coupled Sun-Earth-two-moon model.
+
+model:
+  name: chained-eclipse-bound-binary-giant
+  epoch_utc: "2026-07-10T00:00:00Z"
+  end_utc: "2031-01-01T00:00:00Z"
+  ephemeris: de440s.bsp
+  ephemeris_cache: data/ephemeris
+  dynamics: coupled_hierarchical_binary_moons
+
+second_moon:
+  semimajor_axis_km: 500000.0
+  eccentricity: 0.01
+  inclination_deg: 0.0
+  radius_km: 2514.0
+  density_kg_m3: 3344.0
+  mass_kg: 2.225618374301551e+23
+  prograde: true
+  longitude_ascending_node_deg: 0.0
+  argument_periapsis_deg: 0.0
+  mean_anomaly_deg: 120.0
+
+binary_moons:
+  name: real-moon-plus-distant-giant
+  epoch_utc: "2026-07-10T00:00:00Z"
+  outer_orbit:
+    description: Moon-pair barycenter relative to Earth
+    semimajor_axis_km: 500000.0
+    eccentricity: 0.01
+    inclination_deg: 0.0
+    longitude_ascending_node_deg: 0.0
+    argument_periapsis_deg: 0.0
+    mean_anomaly_deg: 120.0
+  mutual_orbit:
+    description: Giant moon relative to the real Moon
+    semimajor_axis_km: 40000.0
+    eccentricity: 0.01
+    inclination_deg: 0.0
+    longitude_ascending_node_deg: 0.0
+    argument_periapsis_deg: 0.0
+    mean_anomaly_deg: 30.0
+
+geometry:
+  earth_model: WGS84
+  minimum_solar_altitude_deg: 0.0
+  coupled_trajectory_step_seconds: 300.0
+  eclipse_scan_step_seconds: 300.0
+
+stability:
+  years: 1000.0
+  samples: 501
+  integrator: ias15
+  include_earth_j2: false
+  optional_long_years: 10000.0

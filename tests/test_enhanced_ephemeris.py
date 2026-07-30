@@ -23,6 +23,10 @@ from chained_eclipse.enhanced_ephemeris import (
 )
 from chained_eclipse.ephemeris import load_ephemeris
 from chained_eclipse.models import OrbitalElements
+from chained_eclipse.moon_architecture import (
+    architecture_from_config,
+    elements_from_config,
+)
 from chained_eclipse.planetary_dynamics import build_planetary_simulation
 from chained_eclipse.tides_spin import calibrate_earth_k2_delta_t_s
 
@@ -33,6 +37,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def _elements() -> OrbitalElements:
     payload = yaml.safe_load((ROOT / "config" / "optimized_system.yaml").read_text())
     return OrbitalElements(**payload["orbital_elements"])
+
+
+def _binary_system():
+    payload = yaml.safe_load((ROOT / "config" / "bound_binary_giant.yaml").read_text())
+    return elements_from_config(payload), architecture_from_config(payload)
 
 
 def test_tidal_callback_accelerations_balance_force_and_spin_torque() -> None:
@@ -129,6 +138,70 @@ def test_enhanced_ephemeris_reuses_content_addressed_trajectory_cache(
     assert second.relative("real_moon", second.end_tt_jd) == pytest.approx(
         first.relative("real_moon", first.end_tt_jd)
     )
+
+
+def test_enhanced_ephemeris_supports_bound_binary_moons(tmp_path: Path) -> None:
+    context = load_ephemeris(ROOT / "data" / "ephemeris")
+    elements, architecture = _binary_system()
+    assert architecture is not None
+
+    ephemeris = EnhancedEphemeris(
+        context,
+        elements,
+        "2026-07-11T00:00:00Z",
+        sample_step_seconds=3_600.0,
+        binary_architecture=architecture,
+        trajectory_cache_dir=tmp_path,
+    )
+    epoch_separation = np.linalg.norm(
+        ephemeris.relative("second_moon", ephemeris.epoch_tt_jd)
+        - ephemeris.relative("real_moon", ephemeris.epoch_tt_jd)
+    )
+    end_separation = np.linalg.norm(
+        ephemeris.relative("second_moon", ephemeris.end_tt_jd)
+        - ephemeris.relative("real_moon", ephemeris.end_tt_jd)
+    )
+    rotation = ephemeris.metadata["alternate_earth_rotation"]
+
+    assert ephemeris.metadata["architecture"] == "hierarchical binary moons"
+    assert ephemeris.metadata["initial_architecture"]["name"] == architecture.name
+    periapsis = architecture.mutual_orbit.semimajor_axis_km * (
+        1.0 - architecture.mutual_orbit.eccentricity
+    )
+    apoapsis = architecture.mutual_orbit.semimajor_axis_km * (
+        1.0 + architecture.mutual_orbit.eccentricity
+    )
+    assert periapsis <= epoch_separation <= apoapsis
+    assert 20_000.0 < end_separation < 80_000.0
+    assert rotation["comparison_scope"].startswith("alternate bound-binary")
+    assert np.isfinite(rotation["final_delta_mean_solar_lod_ms"])
+    assert ephemeris.metadata["force_model"]["earth_j2_and_first_post_newtonian"][
+        "earth_j2"
+    ]["enabled"]
+    assert ephemeris.metadata["force_model"]["earth_tides_and_spin"]["enabled"]
+    json.dumps(ephemeris.metadata, allow_nan=False)
+
+
+def test_binary_architecture_changes_enhanced_cache_identity(tmp_path: Path) -> None:
+    context = load_ephemeris(ROOT / "data" / "ephemeris")
+    elements, architecture = _binary_system()
+    assert architecture is not None
+    common = {
+        "end_utc": "2026-07-10T01:00:00Z",
+        "sample_step_seconds": 3_600.0,
+        "trajectory_cache_dir": tmp_path,
+    }
+    independent = EnhancedEphemeris(context, elements, **common)
+    binary = EnhancedEphemeris(
+        context,
+        elements,
+        binary_architecture=architecture,
+        **common,
+    )
+
+    assert independent.metadata["trajectory_cache"]["path"] != binary.metadata[
+        "trajectory_cache"
+    ]["path"]
 
 
 def test_reboundx_tide_normalization_recovers_lunar_recession() -> None:

@@ -1,4 +1,4 @@
-"""Thirty-year eclipse-climate catalog and visualization for the coupled system."""
+"""Multi-decade eclipse-climate catalog and visualization for the coupled system."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from .coupled_eclipse import (
 from .ephemeris import load_ephemeris, time_iso_utc
 from .eclipse_geometry import minimum_track_distance_km
 from .lunar_eclipse import find_lunar_eclipses
-from .models import OrbitalElements
+from .moon_architecture import architecture_from_config, elements_from_config
 
 
 REAL_BLUE = "#24649A"
@@ -552,6 +552,8 @@ def _plot_climate(
     notable_lunar: list[dict[str, Any]],
     output_path: Path,
     *,
+    catalog_title: str,
+    inclination_title: str,
     model_description: str,
     model_limitations: str,
 ) -> None:
@@ -601,7 +603,7 @@ def _plot_climate(
             )
         inclination_ax.set_ylabel("Inclination to ecliptic (°)")
         inclination_ax.set_title(
-            "The orbital planes exchange tilt on a roughly 30-year cycle",
+            inclination_title,
             loc="left",
             fontsize=15,
             fontweight="bold",
@@ -706,7 +708,7 @@ def _plot_climate(
         figure.text(
             0.075,
             0.965,
-            "Thirty years of eclipses in the two-moon system",
+            catalog_title,
             fontsize=26,
             fontweight="bold",
             ha="left",
@@ -750,18 +752,27 @@ def run_eclipse_climate(
 ) -> dict[str, Any]:
     context = load_ephemeris("data/ephemeris")
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
-    elements = OrbitalElements(**config["orbital_elements"])
+    elements = elements_from_config(config)
+    binary_architecture = architecture_from_config(config)
+    start_datetime = _iso_datetime(start_utc)
+    end_datetime = _iso_datetime(end_utc)
+    span_years = (end_datetime - start_datetime).total_seconds() / (
+        365.25 * SECONDS_PER_DAY
+    )
+    span_label = f"{span_years:.0f}-year"
+    date_span = f"{start_datetime:%d %b %Y}–{end_datetime:%d %b %Y}"
     if dynamics_model == "baseline":
         ephemeris = CoupledEphemeris(
             context,
             elements,
             end_utc,
             sample_step_seconds=trajectory_step_seconds,
+            binary_architecture=binary_architecture,
         )
         default_output_dir = "outputs/coupled/eclipse_climate_30y"
         model_description = (
             "Fully coupled Newtonian Sun–Earth–Moon–second-moon trajectory · "
-            "10 Jul 2026–10 Jul 2056"
+            + date_span
         )
         model_limitations = (
             "Long-range geography is conditional because tides, major planets, "
@@ -775,11 +786,12 @@ def run_eclipse_climate(
             elements,
             end_utc,
             sample_step_seconds=trajectory_step_seconds,
+            binary_architecture=binary_architecture,
         )
         default_output_dir = "outputs/coupled/eclipse_climate_30y_enhanced"
         model_description = (
             "Enhanced coupled planets + Earth J2 + solar 1PN + tidal-spin trajectory · "
-            "10 Jul 2026–10 Jul 2056"
+            + date_span
         )
         model_limitations = (
             "Late ground tracks remain conditional because tides and terrestrial "
@@ -882,7 +894,7 @@ def run_eclipse_climate(
     }
     payload: dict[str, Any] = {
         "schema_version": "1.0",
-        "mode": f"30-year coupled {dynamics_model} eclipse climate",
+        "mode": f"{span_label} coupled {dynamics_model} eclipse climate",
         "dynamics_model": dynamics_model,
         "start_utc": start_utc,
         "end_utc": end_utc,
@@ -925,6 +937,12 @@ def run_eclipse_climate(
         notable_solar,
         notable_lunar,
         output / "eclipse_climate.png",
+        catalog_title=f"{span_years:.0f} years of eclipses in the two-moon system",
+        inclination_title=(
+            "The bound moons’ orbital planes rise and fall together"
+            if binary_architecture is not None
+            else "The orbital planes exchange tilt over secular cycles"
+        ),
         model_description=model_description,
         model_limitations=model_limitations,
     )

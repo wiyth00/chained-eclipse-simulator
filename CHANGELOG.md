@@ -16,6 +16,11 @@ outputs change for a fixed input configuration.
 - Dependabot configuration for GitHub Actions and uv dependencies.
 - Issue and pull request templates.
 - This changelog.
+- A three-times-scale, constant-density distant giant-moon scenario and a
+  command-line optical/dynamical scaling diagnostic.
+- A hierarchical binary-moon architecture, analytic Hill/hierarchy screens,
+  a 1,000-year bound giant-moon configuration, and binary-aware stability
+  diagnostics.
 
 ### Changed
 
@@ -23,6 +28,14 @@ outputs change for a fixed input configuration.
   superseded in-progress runs, instead of running twice per branch push.
 - CI reports test coverage via `pytest-cov`, which was already declared as a
   dev dependency but not invoked.
+- Configured second-moon radius and mass now flow through restricted searches,
+  coupled solar and lunar eclipses, tides, maps, and animations. Baseline
+  results are unchanged.
+- Alternate scenario design runs no longer overwrite the checked-in baseline
+  optimized orbit.
+- Coupled eclipse, orbit-portrait, and stability commands now accept synthetic
+  Jacobi outer/mutual moon states while preserving the original DE440s
+  initialization by default.
 
 ## [0.1.0] - 2026-07-13
 

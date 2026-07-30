@@ -13,7 +13,6 @@ from scipy.optimize import brentq, minimize_scalar
 import yaml
 
 from .constants import (
-    SECOND_MOON_RADIUS_KM,
     SECONDS_PER_DAY,
     SUN_RADIUS_KM,
     WGS84_A_KM,
@@ -75,8 +74,9 @@ def _vectorized_clearance(
     axial = np.sum(earth_from_moon * axis, axis=1)
     off_axis = earth_from_moon - axial[:, None] * axis
     miss = np.linalg.norm(off_axis, axis=1)
-    angle = np.arcsin((SUN_RADIUS_KM + SECOND_MOON_RADIUS_KM) / distance)
-    penumbra = SECOND_MOON_RADIUS_KM / np.cos(angle) + axial * np.tan(angle)
+    moon_radius_km = trajectory.second_moon_radius_km
+    angle = np.arcsin((SUN_RADIUS_KM + moon_radius_km) / distance)
+    penumbra = moon_radius_km / np.cos(angle) + axial * np.tan(angle)
     clearance = miss - (WGS84_A_KM + penumbra)
     return clearance, axial > 0.0, miss
 
@@ -109,6 +109,7 @@ def scan_standalone_eclipses(
             context,
             context.tt_jd(tt_jd),
             trajectory.position(tt_jd),
+            moon_radius_km=trajectory.second_moon_radius_km,
         )
         return state.axis_miss_km - (WGS84_A_KM + state.penumbra_radius_km)
 
@@ -138,7 +139,10 @@ def scan_standalone_eclipses(
         def axis_miss_seconds(offset_seconds: float) -> float:
             tt_jd = reference_tt + offset_seconds / SECONDS_PER_DAY
             state = hypothetical_shadow_state(
-                context, context.tt_jd(tt_jd), trajectory.position(tt_jd)
+                context,
+                context.tt_jd(tt_jd),
+                trajectory.position(tt_jd),
+                moon_radius_km=trajectory.second_moon_radius_km,
             )
             return state.axis_miss_km
 
@@ -162,13 +166,19 @@ def scan_standalone_eclipses(
         maximum_tt = reference_tt + float(maximum.x) / SECONDS_PER_DAY
         maximum_time = context.tt_jd(maximum_tt)
         position = trajectory.position(maximum_tt)
-        central = central_point_hypothetical(context, maximum_time, position)
+        central = central_point_hypothetical(
+            context,
+            maximum_time,
+            position,
+            moon_radius_km=trajectory.second_moon_radius_km,
+        )
         if central is None:
             surface = maximum_surface_point(
                 context,
                 maximum_time,
                 "second_moon",
                 position_provider=trajectory.position,
+                body_radius_km=trajectory.second_moon_radius_km,
             )
             if surface is None:
                 continue
@@ -183,6 +193,7 @@ def scan_standalone_eclipses(
                 maximum_tt,
                 "second_moon",
                 position_provider=trajectory.position,
+                body_radius_km=trajectory.second_moon_radius_km,
                 half_window_hours=3.0,
                 step_seconds=20.0,
             )
@@ -197,6 +208,7 @@ def scan_standalone_eclipses(
             longitude,
             "second_moon",
             position_provider=trajectory.position,
+            body_radius_km=trajectory.second_moon_radius_km,
             search_half_window_hours=3.0,
             bracket_step_seconds=15.0,
         )

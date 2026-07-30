@@ -40,6 +40,7 @@ from .enhanced_dynamics import (
 )
 from .ephemeris import EphemerisContext
 from .models import OrbitalElements
+from .moon_architecture import BinaryMoonArchitecture
 from .planetary_dynamics import build_planetary_simulation
 from .tides_spin import (
     EARTH_MEAN_SOLAR_DAY_S,
@@ -337,6 +338,7 @@ class EnhancedEphemeris(CoupledEphemeris):
         ias15_epsilon: float = 1.0e-10,
         dynamics_config: EnhancedDynamicsConfig | None = None,
         tide_config: NBodyTideConfig | None = None,
+        binary_architecture: BinaryMoonArchitecture | None = None,
         include_pluto: bool = False,
         cache_trajectory: bool = True,
         trajectory_cache_dir: str | Path | None = None,
@@ -345,6 +347,7 @@ class EnhancedEphemeris(CoupledEphemeris):
             raise ValueError("sample_step_seconds must be finite and positive")
         self.context = context
         self.elements = elements
+        self.binary_architecture = binary_architecture
         self.epoch_tt_jd = float(context.time_utc(elements.epoch_utc).tt)
         self.end_tt_jd = float(context.time_utc(end_utc).tt)
         duration_seconds = (self.end_tt_jd - self.epoch_tt_jd) * SECONDS_PER_DAY
@@ -359,6 +362,7 @@ class EnhancedEphemeris(CoupledEphemeris):
         simulation, planetary_metadata = build_planetary_simulation(
             context,
             elements,
+            binary_architecture=binary_architecture,
             ias15_epsilon=ias15_epsilon,
             include_pluto=include_pluto,
         )
@@ -369,9 +373,11 @@ class EnhancedEphemeris(CoupledEphemeris):
 
         control_simulation = None
         if tide_settings.enabled and tide_settings.evolve_spin:
-            # A matched real-Moon-only control isolates the alternate rotation
-            # history caused by the massive second moon without double-counting
-            # the real Earth's already-observed orientation in Skyfield.
+            # A real-Solar-System control avoids counting the observed real
+            # Moon's tidal braking twice when the differential orientation is
+            # composed onto Skyfield ITRS.  In binary mode the alternate real
+            # Moon has a radically different state, so this is deliberately a
+            # counterfactual reference rather than a same-geometry control.
             control_elements = replace(elements, mass_kg=0.0)
             control_simulation, _ = build_planetary_simulation(
                 context,
@@ -394,6 +400,7 @@ class EnhancedEphemeris(CoupledEphemeris):
             ias15_epsilon=ias15_epsilon,
             dynamics_config=dynamics_settings,
             tide_config=tide_settings,
+            binary_architecture=binary_architecture,
             include_pluto=include_pluto,
             cache_dir=trajectory_cache_dir,
         )
@@ -516,6 +523,11 @@ class EnhancedEphemeris(CoupledEphemeris):
             },
             "start_utc": elements.epoch_utc,
             "end_utc": end_utc,
+            "initial_architecture": (
+                None
+                if binary_architecture is None
+                else binary_architecture.to_dict()
+            ),
             "force_model": {
                 "newtonian": planetary_metadata.get("force_model"),
                 "earth_tides_and_spin": tide_metadata,
@@ -536,11 +548,17 @@ class EnhancedEphemeris(CoupledEphemeris):
             "alternate_earth_rotation": {
                 "method": (
                     "Earth's three-component spin is evolved inside both the full enhanced "
-                    "N-body system and a matched massless-second-moon control; their "
+                    "N-body system and a real-Solar-System control; their "
                     "spin phase and pole differences are applied to Skyfield ITRS"
                 ),
                 "control": (
-                    "same epoch, planets, J2, 1PN, and tides, with second-moon mass set to zero"
+                    "same epoch, planets, J2, 1PN, and tide law; the second moon is "
+                    "massless and the real Moon begins at its DE440 state"
+                ),
+                "comparison_scope": (
+                    "alternate bound-binary Earth minus the real-Moon-only reference"
+                    if binary_architecture is not None
+                    else "independent-second-moon Earth minus the real-Moon-only reference"
                 ),
                 "skyfield_reference_retained": (
                     "observed real-Earth UT1, precession, and nutation as the zero-order reference"
@@ -574,7 +592,7 @@ class EnhancedEphemeris(CoupledEphemeris):
                 "Major planets are point masses; Mars through Neptune use system barycentres and system GMs.",
                 "Relativity uses REBOUNDx gr_full first-order post-Newtonian dynamics; higher orders and spin terms are omitted.",
                 "The constant-time-lag tide is calibrated to present lunar recession and is not an ocean model.",
-                "Earth's tidal spin vector is coupled inside REBOUNDx; its difference from a massless-second-moon control is overlaid on Skyfield's observed orientation.",
+                "Earth's tidal spin vector is coupled inside REBOUNDx; its difference from a real-Moon-only control is overlaid on Skyfield's observed orientation.",
                 "Eclipse shadows omit lunar limb topography and atmospheric enlargement of Earth's lunar-eclipse umbra.",
             ],
         }
@@ -623,6 +641,7 @@ def _trajectory_cache_path(
     ias15_epsilon: float,
     dynamics_config: EnhancedDynamicsConfig,
     tide_config: NBodyTideConfig,
+    binary_architecture: BinaryMoonArchitecture | None,
     include_pluto: bool,
     cache_dir: str | Path | None,
 ) -> Path:
@@ -639,8 +658,11 @@ def _trajectory_cache_path(
     tide_payload["satellite_names"] = list(tide_config.satellite_names)
     tide_payload["earth_spin_axis_icrf"] = list(tide_config.earth_spin_axis_icrf)
     payload = {
-        "schema": 3,
+        "schema": 4,
         "elements": elements.to_dict(),
+        "binary_architecture": (
+            None if binary_architecture is None else binary_architecture.to_dict()
+        ),
         "end_utc": end_utc,
         "sample_step_seconds": sample_step_seconds,
         "ias15_epsilon": ias15_epsilon,
@@ -654,7 +676,7 @@ def _trajectory_cache_path(
         },
         "force_model": (
             "major-planets+gravitational_harmonics+gr_full+"
-            "tides_spin-full-minus-massless-control"
+            "tides_spin-full-minus-real-moon-control"
         ),
     }
     encoded = json.dumps(

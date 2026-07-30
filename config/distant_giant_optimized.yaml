@@ -1,0 +1,68 @@
+schema_version: '1.0'
+model_version: 0.1.0
+mode: fixed-system
+model_boundary:
+  eclipse_search: restricted DE440s-forced real bodies; second moon has no back-reaction
+  stability: fully coupled Newtonian four-body REBOUND experiment
+orbital_elements:
+  semimajor_axis_km: 540000.0
+  eccentricity: 0.04
+  inclination_deg: 5.0
+  longitude_ascending_node_deg: 136.97660391655876
+  argument_periapsis_deg: 303.3911929565569
+  mean_anomaly_deg: 169.76897818252908
+  epoch_utc: '2026-07-10T00:00:00Z'
+  radius_km: 2514.0
+  density_kg_m3: 3344.0
+  mass_kg: 2.225618374301551e+23
+  frame: mean_ecliptic_J2000
+epoch_state:
+  frame: Earth-centred ICRF/J2000
+  position_km:
+  - -182212.6142699146
+  - -503130.089754673
+  - -169400.33190358046
+  velocity_km_s:
+  - 0.7778053326446346
+  - -0.24209904543692964
+  - -0.13630377453378154
+mass_calculation:
+  formula: 4/3*pi*radius^3*density
+  mass_kg: 2.225618374301551e+23
+design_diagnostics:
+  design_degeneracy: Free orientation and phase make a conjunction constructively
+    feasible at the first real eclipse; the date is a design consequence, not a random
+    discovery.
+  target_gap_minutes: 12.0
+  analytic_seed:
+    semimajor_axis_km: 540000.0
+    eccentricity: 0.04
+    inclination_deg: 5.0
+    longitude_ascending_node_deg: 132.5018789853383
+    argument_periapsis_deg: 7.26468576915412
+    mean_anomaly_deg: 94.1907914075141
+    epoch_utc: '2026-07-10T00:00:00Z'
+    radius_km: 2514.0
+    density_kg_m3: 3344.0
+    mass_kg: 2.225618374301551e+23
+    frame: mean_ecliptic_J2000
+  shooting:
+    success: true
+    shooting_calls: 32.0
+    target_position_error_km: 1.1341331817906248e-05
+    cost: 2.966162886936332e-18
+    optimality: 4.338918843177946e-07
+  short_trajectory_metadata:
+    model: DE440s prescribed Sun/Moon + Earth monopole/J2
+    integrator: scipy DOP853
+    rtol: 3.0e-12
+    max_step_seconds: 1800.0
+    ephemeris_interpolation_hours: 0.9999576956033707
+    nfev: 24377
+  target_state_icrf_km_km_s:
+  - -395572.6245544827
+  - 305088.2545787989
+  - 138499.1541120058
+  - -0.5542186184791221
+  - -0.7054140970559616
+  - -0.21265490011386295

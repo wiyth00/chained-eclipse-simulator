@@ -95,7 +95,10 @@ def run_sensitivity_analysis(
         def miss(offset_seconds: float) -> float:
             tt = target_tt_jd + offset_seconds / SECONDS_PER_DAY
             return hypothetical_shadow_state(
-                context, context.tt_jd(tt), trajectory.position(tt)
+                context,
+                context.tt_jd(tt),
+                trajectory.position(tt),
+                moon_radius_km=candidate.radius_km,
             ).axis_miss_km
 
         optimized = minimize_scalar(
@@ -106,7 +109,10 @@ def run_sensitivity_analysis(
         )
         global_tt = target_tt_jd + float(optimized.x) / SECONDS_PER_DAY
         central = central_point_hypothetical(
-            context, context.tt_jd(global_tt), trajectory.position(global_tt)
+            context,
+            context.tt_jd(global_tt),
+            trajectory.position(global_tt),
+            moon_radius_km=candidate.radius_km,
         )
         local = solve_local_circumstances(
             context,
@@ -115,6 +121,7 @@ def run_sensitivity_analysis(
             longitude_deg,
             "second_moon",
             position_provider=trajectory.position,
+            body_radius_km=candidate.radius_km,
             bracket_step_seconds=60.0,
         )
         raw.append(

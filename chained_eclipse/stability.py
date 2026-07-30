@@ -35,6 +35,11 @@ from .constants import (
 )
 from .ephemeris import EphemerisContext
 from .models import OrbitalElements
+from .moon_architecture import (
+    BinaryMoonArchitecture,
+    architecture_diagnostics,
+    binary_moon_states_icrf,
+)
 
 try:  # Permit importing reports/configuration code before optional deps install.
     import rebound as _rebound
@@ -56,6 +61,14 @@ _SERIES_KEYS = (
     "periapsis_km",
     "apoapsis_km",
     "earth_distance_km",
+)
+_MUTUAL_SERIES_KEYS = (
+    "semimajor_axis_km",
+    "eccentricity",
+    "inclination_deg",
+    "periapsis_km",
+    "apoapsis_km",
+    "separation_km",
 )
 
 
@@ -131,6 +144,8 @@ class StabilityResult:
     initial_state: dict[str, Any] = field(default_factory=dict)
     force_model: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    architecture: str = "independent Earth-centred moon orbits"
+    binary_moons: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a strict-JSON-ready dictionary (no NumPy or NaN values)."""
@@ -205,16 +220,17 @@ def build_coupled_simulation(
     context: EphemerisContext,
     elements: OrbitalElements,
     *,
+    real_moon_state_icrf: Any | None = None,
     second_moon_state_icrf: Any | None = None,
+    binary_architecture: BinaryMoonArchitecture | None = None,
     ias15_epsilon: float = 1.0e-10,
 ) -> tuple[Any, dict[str, Any]]:
     """Build a four-body REBOUND simulation at the elements' epoch.
 
-    ``second_moon_state_icrf`` may be a six-vector or an object/tuple holding
-    Earth-relative ICRF position (km) and velocity (km/s).  If omitted, the
-    state is calculated from ``OrbitalElements`` by this module.  Accepting an
-    explicit state lets this function consume a refined state from
-    :mod:`orbital_dynamics` without depending on that module's concrete API.
+    Explicit moon states are Earth-relative ICRF six-vectors.  If the second
+    state is omitted, it is calculated from ``OrbitalElements``.  A
+    ``binary_architecture`` instead constructs both moon states from Jacobi
+    outer and mutual orbits; it cannot be combined with explicit states.
     """
 
     rebound = _require_rebound()
@@ -225,7 +241,6 @@ def build_coupled_simulation(
     states = {
         "sun": _skyfield_state(context.sun, epoch),
         "earth": _skyfield_state(context.earth, epoch),
-        "real_moon": _skyfield_state(context.moon, epoch),
     }
 
     simulation = rebound.Simulation()
@@ -247,19 +262,51 @@ def build_coupled_simulation(
         "second_moon": float(elements.radius_km),
     }
 
-    if second_moon_state_icrf is None:
-        if _project_elements_to_state is not None:
-            relative_second_state = _coerce_state(_project_elements_to_state(elements))
-            state_source = "orbital_dynamics.elements_to_state"
-        else:
-            relative_second_state = orbital_elements_to_icrf_state(
-                elements,
-                MU_EARTH_KM3_S2,
-            )
-            state_source = "local OrbitalElements fallback using the project Earth GM"
+    if binary_architecture is not None:
+        if real_moon_state_icrf is not None or second_moon_state_icrf is not None:
+            raise ValueError("binary_architecture cannot be combined with explicit moon states")
+        if binary_architecture.epoch_utc != elements.epoch_utc:
+            raise ValueError("binary architecture and second-moon epochs must match")
+        relative_states = binary_moon_states_icrf(
+            binary_architecture,
+            gravitational_constant_km3_kg_s2=gravitational_constant,
+            earth_mass_kg=masses["earth"],
+            real_moon_mass_kg=masses["real_moon"],
+            second_moon_mass_kg=masses["second_moon"],
+        )
+        relative_real_state = relative_states["real_moon"]
+        relative_second_state = relative_states["second_moon"]
+        state_source = "binary-moon Jacobi outer and mutual elements"
     else:
-        relative_second_state = _coerce_state(second_moon_state_icrf)
-        state_source = "explicit Earth-relative ICRF Cartesian state"
+        if real_moon_state_icrf is None:
+            states["real_moon"] = _skyfield_state(context.moon, epoch)
+            relative_real_state = states["real_moon"] - states["earth"]
+            real_state_source = "DE440s real-Moon epoch state"
+        else:
+            relative_real_state = _coerce_state(real_moon_state_icrf)
+            states["real_moon"] = states["earth"] + relative_real_state
+            real_state_source = "explicit Earth-relative real-Moon ICRF state"
+
+        if second_moon_state_icrf is None:
+            if _project_elements_to_state is not None:
+                relative_second_state = _coerce_state(_project_elements_to_state(elements))
+                second_state_source = "orbital_dynamics.elements_to_state"
+            else:
+                relative_second_state = orbital_elements_to_icrf_state(
+                    elements,
+                    MU_EARTH_KM3_S2,
+                )
+                second_state_source = "local OrbitalElements fallback using the project Earth GM"
+        else:
+            relative_second_state = _coerce_state(second_moon_state_icrf)
+            second_state_source = "explicit Earth-relative second-moon ICRF state"
+        state_source = {
+            "real_moon": real_state_source,
+            "second_moon": second_state_source,
+        }
+
+    if binary_architecture is not None:
+        states["real_moon"] = states["earth"] + relative_real_state
     states["second_moon"] = states["earth"] + relative_second_state
 
     for name in _BODY_NAMES:
@@ -289,13 +336,27 @@ def build_coupled_simulation(
     metadata = {
         "epoch_utc": elements.epoch_utc,
         "state_source": state_source,
+        "relative_real_moon_state_icrf": relative_real_state.tolist(),
         "relative_second_moon_state_icrf": relative_second_state.tolist(),
         "masses_kg": masses,
         "radii_km": radii,
         "gravitational_constant_km3_kg_s2": gravitational_constant,
         "earth_system_hill_radius_km": float(hill_radius),
         "ephemeris_kernel": str(getattr(context, "kernel_path", "unknown")),
+        "architecture": (
+            "hierarchical binary moons"
+            if binary_architecture is not None
+            else "independent Earth-centred moon orbits"
+        ),
     }
+    if binary_architecture is not None:
+        metadata["binary_moons"] = architecture_diagnostics(
+            binary_architecture,
+            elements,
+            earth_mass_kg=masses["earth"],
+            real_moon_mass_kg=masses["real_moon"],
+            real_moon_radius_km=radii["real_moon"],
+        )
     return simulation, metadata
 
 
@@ -306,7 +367,9 @@ def run_stability_check(
     config: StabilityConfig | None = None,
     years: float | None = None,
     sample_interval_days: float | None = None,
+    real_moon_state_icrf: Any | None = None,
     second_moon_state_icrf: Any | None = None,
+    binary_architecture: BinaryMoonArchitecture | None = None,
 ) -> StabilityResult:
     """Integrate and diagnose the coupled Sun-Earth-two-moon system.
 
@@ -325,7 +388,9 @@ def run_stability_check(
     simulation, initial_state = build_coupled_simulation(
         context,
         elements,
+        real_moon_state_icrf=real_moon_state_icrf,
         second_moon_state_icrf=second_moon_state_icrf,
+        binary_architecture=binary_architecture,
         ias15_epsilon=settings.ias15_epsilon,
     )
     ejection_distance = (
@@ -339,6 +404,14 @@ def run_stability_check(
     moon_moon_distance: list[float] = []
     energy_error: list[float] = []
     series = {name: {key: [] for key in _SERIES_KEYS} for name in _MOON_NAMES}
+    binary_series = (
+        {
+            "outer_barycenter": {key: [] for key in _SERIES_KEYS},
+            "mutual_orbit": {key: [] for key in _MUTUAL_SERIES_KEYS},
+        }
+        if binary_architecture is not None
+        else None
+    )
     flags: dict[str, Any] = {
         "collision": False,
         "collision_pair": None,
@@ -386,13 +459,26 @@ def run_stability_check(
         moon_moon_distance.append(float(current_distance))
         energy_error.append(float(relative_error))
 
-        if _radial_ranges_overlap(real, second):
-            flags["orbit_crossing"] = True
         for name, sample in (("real_moon", real), ("second_moon", second)):
             if sample["earth_distance_km"] >= ejection_distance:
                 flags["ejected"].add(name)
-            if sample["eccentricity"] >= 1.0 or sample["semimajor_axis_km"] <= 0.0:
-                flags["unbound"].add(name)
+
+        if binary_series is None:
+            if _radial_ranges_overlap(real, second):
+                flags["orbit_crossing"] = True
+            for name, sample in (("real_moon", real), ("second_moon", second)):
+                if sample["eccentricity"] >= 1.0 or sample["semimajor_axis_km"] <= 0.0:
+                    flags["unbound"].add(name)
+        else:
+            outer, mutual = _binary_osculating_samples(simulation)
+            for key in _SERIES_KEYS:
+                binary_series["outer_barycenter"][key].append(float(outer[key]))
+            for key in _MUTUAL_SERIES_KEYS:
+                binary_series["mutual_orbit"][key].append(float(mutual[key]))
+            if outer["eccentricity"] >= 1.0 or outer["semimajor_axis_km"] <= 0.0:
+                flags["unbound"].add("moon_pair_barycenter")
+            if mutual["eccentricity"] >= 1.0 or mutual["semimajor_axis_km"] <= 0.0:
+                flags["unbound"].add("moon_pair_mutual_orbit")
 
     record_sample()
     duration_s = settings.years * JULIAN_YEAR_DAYS * SECONDS_PER_DAY
@@ -431,7 +517,14 @@ def run_stability_check(
     final_relative_error = (final_energy - initial_energy) / abs(initial_energy)
     max_abs_energy_error = max((abs(value) for value in energy_error), default=math.inf)
     energy_error_exceeded = max_abs_energy_error > settings.max_relative_energy_error
-    severe_growth = _detect_severe_growth(series, settings)
+    if binary_series is None:
+        severe_growth = _detect_severe_growth(series, settings)
+    else:
+        severe_growth = _detect_severe_growth(
+            binary_series,
+            settings,
+            body_names=("outer_barycenter", "mutual_orbit"),
+        )
     stable = bool(
         completed
         and not flags["collision"]
@@ -454,10 +547,28 @@ def run_stability_check(
         "orbits need not intersect geometrically.",
         f"Minimum moon-moon distance was monitored at {heartbeat_mode}.",
     ]
+    if binary_architecture is not None:
+        warnings.extend(
+            (
+                "The individual moons' Earth-centred osculating elements contain "
+                "their mutual motion; binary stability is judged from Jacobi outer "
+                "and mutual elements instead.",
+                "The analytic Hill and hierarchy checks are screens, not proofs.",
+            )
+        )
     if not completed:
         warnings.append("Integration ended before the requested duration.")
     if energy_error_exceeded:
         warnings.append("Relative point-mass energy error exceeded the configured limit.")
+
+    binary_output = None
+    if binary_series is not None:
+        binary_output = {
+            **initial_state["binary_moons"],
+            "time_years": time_years,
+            "outer_barycenter": binary_series["outer_barycenter"],
+            "mutual_orbit": binary_series["mutual_orbit"],
+        }
 
     return StabilityResult(
         stable=stable,
@@ -504,6 +615,8 @@ def run_stability_check(
             "element_diagnostics": "instantaneous two-body osculating about Earth",
         },
         warnings=warnings,
+        architecture=initial_state["architecture"],
+        binary_moons=binary_output,
     )
 
 
@@ -529,24 +642,60 @@ def plot_stability(
 
     data = result.to_dict() if isinstance(result, StabilityResult) else dict(result)
     time = _float_array(data["time_years"])
-    real = data["real_moon"]
-    second = data["second_moon"]
     fig, axes = plt.subplots(5, 1, figsize=(11.0, 13.5), sharex=True, constrained_layout=True)
 
-    axes[0].plot(time, _float_array(real["semimajor_axis_km"]), label="Real Moon")
-    axes[0].plot(time, _float_array(second["semimajor_axis_km"]), label="Second moon")
-    axes[0].set_ylabel("a (km)")
-    axes[0].legend(loc="best")
+    binary = data.get("binary_moons")
+    if binary is None:
+        real = data["real_moon"]
+        second = data["second_moon"]
+        axes[0].plot(time, _float_array(real["semimajor_axis_km"]), label="Real Moon")
+        axes[0].plot(time, _float_array(second["semimajor_axis_km"]), label="Second moon")
+        axes[0].set_ylabel("a (km)")
+        axes[0].legend(loc="best")
 
-    axes[1].plot(time, _float_array(real["eccentricity"]))
-    axes[1].plot(time, _float_array(second["eccentricity"]))
-    axes[1].set_ylabel("e")
+        axes[1].plot(time, _float_array(real["eccentricity"]))
+        axes[1].plot(time, _float_array(second["eccentricity"]))
+        axes[1].set_ylabel("e")
 
-    axes[2].plot(time, _float_array(real["inclination_deg"]))
-    axes[2].plot(time, _float_array(second["inclination_deg"]))
-    axes[2].set_ylabel("i (deg, ecl. J2000)")
+        axes[2].plot(time, _float_array(real["inclination_deg"]))
+        axes[2].plot(time, _float_array(second["inclination_deg"]))
+        axes[2].set_ylabel("i (deg, ecl. J2000)")
+        separation = _float_array(data["moon_moon_distance_km"])
+    else:
+        outer = binary["outer_barycenter"]
+        mutual = binary["mutual_orbit"]
+        axes[0].plot(
+            time,
+            _float_array(outer["semimajor_axis_km"]),
+            color="tab:blue",
+            label="Moon-pair barycenter about Earth",
+        )
+        axes[0].set_ylabel("Outer a (km)")
+        axes[0].legend(loc="best")
+        axes[1].plot(
+            time,
+            _float_array(mutual["semimajor_axis_km"]),
+            color="tab:orange",
+            label="Moon–moon mutual orbit",
+        )
+        axes[1].set_ylabel("Mutual a (km)")
+        axes[1].legend(loc="best")
+        axes[2].plot(
+            time,
+            _float_array(outer["eccentricity"]),
+            color="tab:blue",
+            label="Outer",
+        )
+        axes[2].plot(
+            time,
+            _float_array(mutual["eccentricity"]),
+            color="tab:orange",
+            label="Mutual",
+        )
+        axes[2].set_ylabel("Eccentricity")
+        axes[2].legend(loc="best")
+        separation = _float_array(mutual["separation_km"])
 
-    separation = _float_array(data["moon_moon_distance_km"])
     axes[3].plot(time, separation, color="tab:purple")
     axes[3].axhline(
         REAL_MOON_RADIUS_KM
@@ -694,6 +843,19 @@ def _relative_vectors(simulation: Any, body_name: str) -> tuple[np.ndarray, np.n
 
 def _osculating_sample(simulation: Any, body_name: str) -> dict[str, float]:
     position_icrf, velocity_icrf = _relative_vectors(simulation, body_name)
+    earth = simulation.particles["earth"]
+    body = simulation.particles[body_name]
+    mu = float(simulation.G * (earth.m + body.m))
+    return _osculating_from_relative_vectors(position_icrf, velocity_icrf, mu)
+
+
+def _osculating_from_relative_vectors(
+    position_icrf: np.ndarray,
+    velocity_icrf: np.ndarray,
+    gravitational_parameter_km3_s2: float,
+) -> dict[str, float]:
+    """Return mean-ecliptic osculating elements from one relative state."""
+
     icrf_to_ecliptic = _rotation_x(-math.radians(OBLIQUITY_J2000_DEG))
     position = icrf_to_ecliptic @ position_icrf
     velocity = icrf_to_ecliptic @ velocity_icrf
@@ -701,9 +863,7 @@ def _osculating_sample(simulation: Any, body_name: str) -> dict[str, float]:
     speed_squared = float(np.dot(velocity, velocity))
     angular_momentum = np.cross(position, velocity)
     momentum_norm = float(np.linalg.norm(angular_momentum))
-    earth = simulation.particles["earth"]
-    body = simulation.particles[body_name]
-    mu = float(simulation.G * (earth.m + body.m))
+    mu = float(gravitational_parameter_km3_s2)
     specific_energy = 0.5 * speed_squared - mu / distance
     semimajor_axis = -mu / (2.0 * specific_energy) if specific_energy != 0.0 else math.inf
     eccentricity_vector = np.cross(velocity, angular_momentum) / mu - position / distance
@@ -725,6 +885,41 @@ def _osculating_sample(simulation: Any, body_name: str) -> dict[str, float]:
         "apoapsis_km": float(apoapsis),
         "earth_distance_km": distance,
     }
+
+
+def _binary_osculating_samples(
+    simulation: Any,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Return Jacobi outer and mutual osculating elements for a moon pair."""
+
+    earth = simulation.particles["earth"]
+    real = simulation.particles["real_moon"]
+    second = simulation.particles["second_moon"]
+    pair_mass = float(real.m + second.m)
+    real_position = np.asarray((real.x, real.y, real.z), dtype=float)
+    second_position = np.asarray((second.x, second.y, second.z), dtype=float)
+    real_velocity = np.asarray((real.vx, real.vy, real.vz), dtype=float)
+    second_velocity = np.asarray((second.vx, second.vy, second.vz), dtype=float)
+    earth_position = np.asarray((earth.x, earth.y, earth.z), dtype=float)
+    earth_velocity = np.asarray((earth.vx, earth.vy, earth.vz), dtype=float)
+    barycenter_position = (
+        float(real.m) * real_position + float(second.m) * second_position
+    ) / pair_mass
+    barycenter_velocity = (
+        float(real.m) * real_velocity + float(second.m) * second_velocity
+    ) / pair_mass
+    outer = _osculating_from_relative_vectors(
+        barycenter_position - earth_position,
+        barycenter_velocity - earth_velocity,
+        float(simulation.G * (earth.m + pair_mass)),
+    )
+    mutual = _osculating_from_relative_vectors(
+        second_position - real_position,
+        second_velocity - real_velocity,
+        float(simulation.G * pair_mass),
+    )
+    mutual["separation_km"] = mutual.pop("earth_distance_km")
+    return outer, mutual
 
 
 def _radial_ranges_overlap(first: Mapping[str, float], second: Mapping[str, float]) -> bool:
@@ -800,9 +995,12 @@ def _closest_surface_pair(simulation: Any) -> tuple[str, str] | None:
 
 
 def _detect_severe_growth(
-    series: Mapping[str, Mapping[str, list[float]]], settings: StabilityConfig
+    series: Mapping[str, Mapping[str, list[float]]],
+    settings: StabilityConfig,
+    *,
+    body_names: Sequence[str] = _MOON_NAMES,
 ) -> bool:
-    for body in _MOON_NAMES:
+    for body in body_names:
         eccentricities = np.asarray(series[body]["eccentricity"], dtype=float)
         semimajor_axes = np.asarray(series[body]["semimajor_axis_km"], dtype=float)
         if eccentricities.size and np.nanmax(eccentricities) >= settings.severe_eccentricity:
