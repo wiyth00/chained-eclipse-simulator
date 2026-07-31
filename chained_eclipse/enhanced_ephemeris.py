@@ -501,6 +501,14 @@ class EnhancedEphemeris(CoupledEphemeris):
         pole_separation_rad = np.arccos(
             np.clip(np.sum(full_spin_axes * control_spin_axes, axis=1), -1.0, 1.0)
         )
+        self._endpoint_rotation_diagnostics = {
+            "delta_mean_solar_lod_ms": float(delta_lod_ms[-1]),
+            "delta_ut1_s": float(delta_ut1_s[-1]),
+            "longitude_shift_deg": float(longitude_shift[-1]),
+            "pole_separation_arcsec": float(
+                np.degrees(pole_separation_rad[-1]) * 3_600.0
+            ),
+        }
 
         self._phase_offset_spline = CubicSpline(self.seconds, delta_phase)
         self._longitude_offset_spline = CubicSpline(self.seconds, longitude_shift)
@@ -712,11 +720,21 @@ class EnhancedEphemeris(CoupledEphemeris):
         """Return full-minus-control Earth rotation diagnostics at one epoch."""
 
         seconds = float(self._seconds(tt_jd))
-        full_vector = np.asarray(self._spin_splines["earth"](seconds), dtype=float)
-        control_vector = np.asarray(
-            self._control_spin_splines["earth"](seconds),
-            dtype=float,
-        )
+        # Converting the stored endpoint TT Julian date back to elapsed seconds
+        # can lose precision because the epoch is ~2.4 million days from zero.
+        # An exact endpoint query should still describe the exact final sample
+        # used to populate metadata.
+        if float(tt_jd) == self.end_tt_jd:
+            return dict(self._endpoint_rotation_diagnostics)
+        else:
+            full_vector = np.asarray(
+                self._spin_splines["earth"](seconds),
+                dtype=float,
+            )
+            control_vector = np.asarray(
+                self._control_spin_splines["earth"](seconds),
+                dtype=float,
+            )
         full_rate = float(np.linalg.norm(full_vector))
         control_rate = float(np.linalg.norm(control_vector))
         initial_rate = self._initial_earth_spin_rate_rad_s
