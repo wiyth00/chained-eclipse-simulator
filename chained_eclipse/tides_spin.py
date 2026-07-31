@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import numpy as np
-from scipy.integrate import solve_ivp
 
 from .constants import (
     EARTH_MASS_KG,
@@ -333,11 +332,12 @@ def mignard_pair_effect(
         "satellite_mass_kg": satellite_mass_kg,
         "primary_mass_kg": primary_mass_kg,
         "primary_radius_km": primary_radius_km,
-        "k2_delta_t_s": k2_delta_t_s,
     }
     for name, value in positive.items():
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"{name} must be finite and positive")
+    if not math.isfinite(k2_delta_t_s) or k2_delta_t_s < 0.0:
+        raise ValueError("k2_delta_t_s must be finite and non-negative")
     radius = float(np.linalg.norm(position))
     if radius <= primary_radius_km:
         raise ValueError("the Mignard satellite position must lie outside the primary")
@@ -672,6 +672,8 @@ def _integrate_secular_scenario(
     initial_spin: float,
     k2_lag: float,
 ) -> SecularScenarioHistory:
+    from scipy.integrate import solve_ivp
+
     duration_s = config.years * JULIAN_YEAR_DAYS * SECONDS_PER_DAY
     sample_step_s = config.sample_interval_days * SECONDS_PER_DAY
     sample_times = np.arange(0.0, duration_s, sample_step_s)

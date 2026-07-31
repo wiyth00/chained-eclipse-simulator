@@ -13,6 +13,17 @@ outputs change for a fixed input configuration.
 
 ### Added
 
+- Explicit inertial spin vectors and polar moments of inertia for Earth, the
+  real Moon, and the giant moon, evolved by one coupled REBOUNDx `tides_spin`
+  system.
+- Configurable low, nominal, and high lunar/giant-moon Love-number, time-lag,
+  inertia, and initial-spin scenarios with provenance and deliberate
+  uncertainty labels.
+- Orbital-plus-spin angular-momentum and complete REBOUNDx mechanical-energy
+  diagnostics, three-body spin histories, synchronization ratios, and
+  barycentric frame/recentering metadata.
+- A permanent-figure configuration interface that records J2/C22 assumptions
+  but fails fast if enabled before a reaction-aware attitude backend exists.
 - Dependabot configuration for GitHub Actions and uv dependencies.
 - Issue and pull request templates.
 - This changelog.
@@ -24,6 +35,16 @@ outputs change for a fixed input configuration.
 
 ### Changed
 
+- The enhanced bound-binary configuration now includes tides raised inside
+  both moons by every active massive body, including the other moon, with
+  equal-and-opposite orbital and spin reactions supplied by one `tides_spin`
+  force instance.
+- Enhanced trajectory cache identity now includes all rotational parameters
+  and initial states, REBOUND/REBOUNDx versions, and the DE440s kernel SHA-256;
+  cache writers use process-unique temporary files and persist the integrator's
+  velocity samples for trustworthy osculating-element audits.
+- The model version is now `0.2.0` because the enhanced bound-binary numerical
+  trajectory changes when its new rotational-tide scenario is active.
 - CI now only runs on pushes to `main` (plus all pull requests) and cancels
   superseded in-progress runs, instead of running twice per branch push.
 - CI reports test coverage via `pytest-cov`, which was already declared as a

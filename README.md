@@ -425,11 +425,16 @@ four-body control with a higher-fidelity counterfactual integration:
   all active bodies. This is materially stronger than a Sun-only Schwarzschild
   correction, but it still omits higher PN orders, frame dragging and the solar
   quadrupole.
-- REBOUNDx `tides_spin` treats Earth as the deformable, spinning body and the
-  other active bodies as point-mass tide raisers. Its constant time lag is
-  normalized to reproduce 38.2 mm/year of circular real-Moon recession at
-  384,400 km, and Earth's three-component spin vector is evolved inside the
-  same N-body integration.
+- One REBOUNDx `tides_spin` force treats Earth, the real Moon, and the giant
+  moon as deformable, spinning bodies. Each has an explicit three-component
+  inertial spin vector, polar moment of inertia, Love number, and constant time
+  lag. Earth remains normalized to reproduce 38.2 mm/year of circular
+  real-Moon recession at 384,400 km. The lunar and giant-moon material
+  properties are labeled low, nominal, and high sensitivity scenarios rather
+  than asserted measurements.
+- REBOUNDx exposes no tide-raiser pair filter: each configured structured body
+  responds to every other active massive particle. This global interaction
+  scope is explicit in configuration, metadata, and cache identity.
 
 REBOUND and REBOUNDx are constrained to the compatible `>=4.6,<5.0` API range
 in `pyproject.toml`. The quick-start install includes both packages and the
@@ -472,11 +477,22 @@ counterfactual perturbation attributed to the second moon. It is a differential
 attitude model, not a newly fitted future Earth-orientation series.
 
 The Earth tide is the REBOUNDx vector constant-time-lag model, calibrated to
-the present real-Moon recession rate. Both moons and the Sun raise tides on
-Earth and exchange angular momentum with its evolving spin vector. Earth J2
-acts on every active body, but its axis is held fixed: J2 changes the orbits
-and eclipse geometry but this model does not yet apply the equal-and-opposite
-J2 figure torque to Earth's spin.
+the present real-Moon recession rate. Earth and both moons now raise tides in
+one another and exchange orbital and spin angular momentum through the same
+reaction-complete `tides_spin` force. The configured spin vector shared by
+Earth J2 and the tide model evolves, so the J2 axis is no longer described as
+fixed. REBOUNDx `gravitational_harmonics` still omits the equal-and-opposite J2
+figure torque to Earth's spin; strict conservation tests therefore disable
+that separate force.
+
+The named `rotational_tides` scenarios in
+`config/bound_binary_giant.yaml` carry every spin, inertia, Love-number, lag,
+and deferred permanent-figure assumption. A nonzero permanent J2 or C22 may be
+recorded while disabled, but enabling it fails fast until a reaction-aware
+attitude backend exists. Likewise, an active tide requires spin evolution:
+disabling only the spin ODE would discard the reaction torque, so that
+configuration fails fast; disabling the complete tide retains the legacy
+fixed-spin limit.
 
 ### Run, map, and compare
 
@@ -551,11 +567,14 @@ massless-second-moon attitude control must both be integrated. By default,
 data/trajectories/enhanced_<20-character-sha256-prefix>.npz
 ```
 
-The cache contains the sampled Sun/Earth/two-moon positions, full and control
-Earth-spin vectors, and the Newtonian energy diagnostic. Its key includes the
-orbital elements, end time, trajectory cadence, IAS15 tolerance, J2/relativity
-and tide settings, Pluto toggle, force-model schema, and DE440s kernel name,
-size, and modification time. Detector cadence is intentionally excluded
+The cache contains the sampled Sun/Earth/two-moon positions and integrator
+velocities, full and control spin vectors for every structured body, and
+Newtonian plus rotational
+conservation diagnostics. Its key includes the orbital elements, every
+rotational/tidal parameter and initial spin state, end time, trajectory
+cadence, IAS15 tolerance, J2/relativity settings, Pluto toggle, force-model
+schema, REBOUND/REBOUNDx versions, and the DE440s kernel SHA-256. Detector
+cadence is intentionally excluded
 because it consumes but does not alter the trajectory. Repeating a climate or
 track run with the same trajectory settings loads the cached arrays; changing
 a keyed physical setting creates a different file instead of overwriting the
@@ -563,9 +582,9 @@ old integration.
 
 Programmatic callers can set `cache_trajectory=False` or provide
 `trajectory_cache_dir` to `EnhancedEphemeris`. If the force implementation or
-REBOUND/REBOUNDx build changes without a cache-schema change, remove the
-corresponding cached file before treating the rerun as independent; source and
-library binaries themselves are not hashed into the key.
+REBOUND/REBOUNDx build changes without a version change still require an
+independent cache location; the package versions are keyed, but native library
+binaries are not hashed.
 
 ### Scientific limits of the enhanced run
 
@@ -577,22 +596,27 @@ hypothetical system into a high-precision astronomical forecast:
 - The planets are point masses; Mars through Neptune are system barycentres.
   Asteroids, trans-Neptunian objects, Pluto by default, and planetary figure
   terms other than Earth J2 are omitted.
-- Earth J2 has a fixed coefficient and radius. Lunar and second-moon permanent
-  figures, libration, deformation, and tides raised inside either moon are not
-  modeled.
+- Earth J2 has a fixed coefficient and radius. Tides raised inside both moons
+  and their vector-spin evolution are modeled, but lunar and second-moon
+  permanent figures, body attitude, and physical libration are deferred until
+  an equal-and-opposite, reaction-aware J2/C22 backend exists.
 - `tides_spin` is a constant-time-lag equilibrium-tide approximation calibrated
-  at the present lunar orbit. It is not a frequency-dependent ocean and
-  solid-Earth tide model, and it omits changing Earth inertia and
-  atmosphere/ocean angular momentum exchange.
+  at the present lunar orbit for Earth. It is not a frequency-dependent ocean,
+  mantle, or solid-body tide model. Lunar and giant-moon lags are explicitly
+  uncertain scenarios, and changing inertia plus atmosphere/ocean angular
+  momentum exchange are omitted.
 - The differential attitude overlay is physically motivated but is not an
   observational UT1 or polar-motion prediction. J2 reaction torque, free
   nutation, and a fully refitted alternate-Earth orientation solution remain
   outside the model.
 - Relativity stops at first post-Newtonian order. Solar frame dragging, the
   solar quadrupole, and higher-order terms are omitted.
-- REBOUND's ordinary `Simulation.energy()` is only a Newtonian diagnostic here:
-  it excludes the J2/1PN Hamiltonian contributions, while tides are genuinely
-  dissipative. Its drift must not be labeled total energy error.
+- REBOUND's ordinary `Simulation.energy()` remains a Newtonian diagnostic.
+  The rotational diagnostic instead uses the REBOUNDx `gr_full` Hamiltonian,
+  gravitational-harmonics potential, and `tides_spin` spin/quadrupole energy
+  where active. Positive-lag tides dissipate that mechanical energy; Earth J2
+  still prevents a strict total-angular-momentum claim because its source-spin
+  reaction is absent.
 - Eclipse geometry still omits lunar limb topography and atmospheric
   enlargement of Earth's shadow during lunar eclipses. Grazing classifications
   remain more cadence-sensitive than central events.

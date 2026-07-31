@@ -31,7 +31,8 @@ from .constants import (
 )
 from .enhanced_ephemeris import EnhancedEphemeris
 from .ephemeris import load_ephemeris, time_iso_utc
-from .models import OrbitalElements
+from .moon_architecture import architecture_from_config, elements_from_config
+from .rotational_dynamics import rotational_tide_config_from_mapping
 from .tides_spin import G_KM3_KG_S2
 
 
@@ -382,7 +383,9 @@ def run_tide_visualization(
     if days <= 0.0 or time_step_minutes <= 0.0:
         raise ValueError("days and time_step_minutes must be positive")
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
-    elements = OrbitalElements(**config["orbital_elements"])
+    elements = elements_from_config(config)
+    binary_architecture = architecture_from_config(config)
+    rotational_tide_config = rotational_tide_config_from_mapping(config)
     context = load_ephemeris(ephemeris_cache)
     start = context.time_utc(elements.epoch_utc)
     end_tt = float(start.tt) + days
@@ -392,6 +395,8 @@ def run_tide_visualization(
         elements,
         end_utc,
         sample_step_seconds=trajectory_step_seconds,
+        binary_architecture=binary_architecture,
+        tide_config=rotational_tide_config,
     )
     step_days = time_step_minutes * 60.0 / SECONDS_PER_DAY
     times = np.arange(float(start.tt), end_tt, step_days, dtype=float)

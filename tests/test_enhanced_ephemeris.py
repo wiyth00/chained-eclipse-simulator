@@ -19,6 +19,7 @@ from chained_eclipse.enhanced_ephemeris import (
     EnhancedEphemeris,
     NBodyTideConfig,
     attach_reboundx_earth_tides,
+    attach_reboundx_rotational_tides,
     earth_tidal_accelerations,
 )
 from chained_eclipse.ephemeris import load_ephemeris
@@ -28,6 +29,9 @@ from chained_eclipse.moon_architecture import (
     elements_from_config,
 )
 from chained_eclipse.planetary_dynamics import build_planetary_simulation
+from chained_eclipse.rotational_dynamics import (
+    rotational_tide_config_from_mapping,
+)
 from chained_eclipse.tides_spin import calibrate_earth_k2_delta_t_s
 
 
@@ -42,6 +46,13 @@ def _elements() -> OrbitalElements:
 def _binary_system():
     payload = yaml.safe_load((ROOT / "config" / "bound_binary_giant.yaml").read_text())
     return elements_from_config(payload), architecture_from_config(payload)
+
+
+def _binary_tide_config():
+    payload = yaml.safe_load(
+        (ROOT / "config" / "bound_binary_giant.yaml").read_text()
+    )
+    return rotational_tide_config_from_mapping(payload)
 
 
 def test_tidal_callback_accelerations_balance_force_and_spin_torque() -> None:
@@ -151,6 +162,7 @@ def test_enhanced_ephemeris_supports_bound_binary_moons(tmp_path: Path) -> None:
         "2026-07-11T00:00:00Z",
         sample_step_seconds=3_600.0,
         binary_architecture=architecture,
+        tide_config=_binary_tide_config(),
         trajectory_cache_dir=tmp_path,
     )
     epoch_separation = np.linalg.norm(
@@ -179,6 +191,31 @@ def test_enhanced_ephemeris_supports_bound_binary_moons(tmp_path: Path) -> None:
         "earth_j2"
     ]["enabled"]
     assert ephemeris.metadata["force_model"]["earth_tides_and_spin"]["enabled"]
+    histories = ephemeris.metadata["rotational_state_histories"]
+    assert set(histories) == {"earth", "real_moon", "second_moon"}
+    assert histories["real_moon"]["initial_spin_to_mutual_mean_motion"] == (
+        pytest.approx(1.0, rel=2.0e-5)
+    )
+    assert histories["second_moon"]["final_spin_rate_rad_s"] > 0.0
+    assert np.all(
+        np.isfinite(
+            ephemeris.spin_vector_rad_s(
+                "second_moon",
+                ephemeris.end_tt_jd,
+            )
+        )
+    )
+    sampled_rotation = ephemeris.earth_rotation_diagnostics(
+        ephemeris.end_tt_jd
+    )
+    assert sampled_rotation["delta_mean_solar_lod_ms"] == pytest.approx(
+        rotation["final_delta_mean_solar_lod_ms"],
+        abs=1.0e-12,
+    )
+    assert sampled_rotation["pole_separation_arcsec"] == pytest.approx(
+        rotation["final_pole_separation_arcsec"],
+        abs=1.0e-9,
+    )
     json.dumps(ephemeris.metadata, allow_nan=False)
 
 
@@ -239,3 +276,32 @@ def test_reboundx_tide_normalization_recovers_lunar_recession() -> None:
     recession_m_per_year = (final_axis - initial_axis) * 1_000.0 / 10.0
     assert recession_m_per_year == pytest.approx(0.0382, abs=2.0e-5)
     assert metadata["reboundx_normalization_factor"] == 0.5
+
+
+def test_reboundx_configures_all_three_structured_bodies() -> None:
+    context = load_ephemeris(ROOT / "data" / "ephemeris")
+    elements, architecture = _binary_system()
+    assert architecture is not None
+    config = _binary_tide_config()
+    assert config is not None
+    simulation, _ = build_planetary_simulation(
+        context,
+        elements,
+        binary_architecture=architecture,
+    )
+
+    metadata = attach_reboundx_rotational_tides(simulation, config)
+
+    assert metadata["interaction_scope"] == "all_active_massive_bodies"
+    assert [
+        body["name"] for body in metadata["structured_bodies"]
+    ] == ["earth", "real_moon", "second_moon"]
+    assert metadata["skipped_massless_structured_bodies"] == []
+    for name in ("earth", "real_moon", "second_moon"):
+        particle = simulation.particles[name]
+        assert float(particle.params["I"]) > 0.0
+        assert float(particle.params["k2"]) >= 0.0
+        assert float(particle.params["tau"]) >= 0.0
+        omega = particle.params["Omega"]
+        assert np.all(np.isfinite((omega.x, omega.y, omega.z)))
+    json.dumps(metadata, allow_nan=False)

@@ -6,12 +6,12 @@ counterfactual model.  It combines:
 * active Newtonian point masses for all eight major planets;
 * Earth's :math:`J_2` quadrupole;
 * full first-order post-Newtonian interactions through REBOUNDx ``gr_full``;
-* a vector-spin constant-time-lag Earth tide; and
+* vector-spin constant-time-lag tides in Earth and both moons; and
 * a differential Earth attitude history used to move eclipse ground tracks.
 
 DE440s supplies all real-body states only at the 2026 epoch.  The alternate
 system is then propagated freely by REBOUND IAS15.  Skyfield still supplies
-the observed real-Earth orientation reference; modeled spin phase and pole
+the observed real-Earth orientation reference; differential Earth spin phase and pole
 differences from a matched massless-second-moon control are composed onto that
 reference.  This is deliberately explicit rather than being presented as a
 new fitted ephemeris or observational Earth-orientation solution.
@@ -20,16 +20,16 @@ new fitted ephemeris or observational Earth-orientation solution.
 from __future__ import annotations
 
 import ctypes
-from dataclasses import asdict, dataclass, replace
+from dataclasses import replace
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
+import uuid
 
 import numpy as np
-from scipy.integrate import cumulative_trapezoid
-from scipy.interpolate import CubicSpline
 from skyfield.framelib import itrs
 
 from .constants import SECONDS_PER_DAY, WGS84_A_KM
@@ -39,59 +39,24 @@ from .enhanced_dynamics import (
     attach_reboundx_enhanced_forces,
 )
 from .ephemeris import EphemerisContext
+from .interpolation import CubicSpline
 from .models import OrbitalElements
 from .moon_architecture import BinaryMoonArchitecture
 from .planetary_dynamics import build_planetary_simulation
+from .rotational_diagnostics import (
+    relative_vector_change,
+    rotational_diagnostic_snapshot,
+)
+from .rotational_dynamics import (
+    NBodyTideConfig,
+    attach_reboundx_rotational_tides as _attach_reboundx_rotational_tides,
+)
 from .tides_spin import (
     EARTH_MEAN_SOLAR_DAY_S,
-    EARTH_POLAR_MOMENT_FACTOR,
-    EARTH_SIDEREAL_DAY_S,
     G_KM3_KG_S2,
     calibrate_earth_k2_delta_t_s,
     mignard_pair_effect,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class NBodyTideConfig:
-    """Settings for the coupled Earth-tide force and spin model."""
-
-    enabled: bool = True
-    satellite_names: tuple[str, ...] = ("real_moon", "second_moon")
-    earth_spin_axis_icrf: tuple[float, float, float] = (0.0, 0.0, 1.0)
-    initial_sidereal_day_s: float = EARTH_SIDEREAL_DAY_S
-    earth_love_number_k2: float = 0.3
-    earth_polar_moment_factor: float = EARTH_POLAR_MOMENT_FACTOR
-    evolve_spin: bool = True
-    k2_delta_t_s: float | None = None
-
-    def validate(self) -> None:
-        if not self.satellite_names:
-            raise ValueError("satellite_names must not be empty")
-        if len(set(self.satellite_names)) != len(self.satellite_names):
-            raise ValueError("satellite_names must be unique")
-        axis = np.asarray(self.earth_spin_axis_icrf, dtype=float)
-        if axis.shape != (3,) or not np.all(np.isfinite(axis)):
-            raise ValueError("earth_spin_axis_icrf must be a finite three-vector")
-        if np.linalg.norm(axis) == 0.0:
-            raise ValueError("earth_spin_axis_icrf must be non-zero")
-        if not math.isfinite(self.initial_sidereal_day_s) or self.initial_sidereal_day_s <= 0.0:
-            raise ValueError("initial_sidereal_day_s must be finite and positive")
-        if not math.isfinite(self.earth_love_number_k2) or self.earth_love_number_k2 <= 0.0:
-            raise ValueError("earth_love_number_k2 must be finite and positive")
-        if (
-            not math.isfinite(self.earth_polar_moment_factor)
-            or self.earth_polar_moment_factor <= 0.0
-        ):
-            raise ValueError("earth_polar_moment_factor must be finite and positive")
-        if self.k2_delta_t_s is not None and (
-            not math.isfinite(self.k2_delta_t_s) or self.k2_delta_t_s <= 0.0
-        ):
-            raise ValueError("k2_delta_t_s must be finite and positive when supplied")
-
-    def normalized_spin_axis(self) -> np.ndarray:
-        axis = np.asarray(self.earth_spin_axis_icrf, dtype=float)
-        return axis / np.linalg.norm(axis)
 
 
 def earth_tidal_accelerations(
@@ -256,73 +221,22 @@ def attach_earth_tides(
     }
 
 
+def attach_reboundx_rotational_tides(
+    simulation: Any,
+    config: NBodyTideConfig | None = None,
+) -> dict[str, Any]:
+    """Compatibility export for the generalized structured-body tide."""
+
+    return _attach_reboundx_rotational_tides(simulation, config)
+
+
 def attach_reboundx_earth_tides(
     simulation: Any,
     config: NBodyTideConfig | None = None,
 ) -> dict[str, Any]:
-    """Attach REBOUNDx's compiled vector-spin constant-time-lag tide."""
+    """Backward-compatible name for the generalized structured-body tide."""
 
-    try:
-        import reboundx
-    except ImportError as exc:  # pragma: no cover - production dependency
-        raise RuntimeError("The coupled tidal-spin model requires reboundx") from exc
-
-    settings = NBodyTideConfig() if config is None else config
-    settings.validate()
-    earth = simulation.particles["earth"]
-    k2_lag = (
-        calibrate_earth_k2_delta_t_s(
-            moon_mass_kg=float(simulation.particles["real_moon"].m),
-            earth_mass_kg=float(earth.m),
-            earth_spin_rad_s=2.0 * math.pi / settings.initial_sidereal_day_s,
-        )
-        if settings.k2_delta_t_s is None
-        else float(settings.k2_delta_t_s)
-    )
-    # REBOUNDx's Eggleton/Hut normalization produces twice the circular
-    # recession of the Mignard convention used by calibrate_earth_k2_delta_t_s
-    # for the same k2*tau.  The factor of one half is verified numerically
-    # against 38.2 mm/year at 384,400 km in the test suite.
-    physical_lag = k2_lag / (2.0 * settings.earth_love_number_k2)
-    if settings.enabled:
-        extras = getattr(simulation, "_extras_ref", None)
-        if extras is None:
-            extras = reboundx.Extras(simulation)
-        tides = extras.load_force("tides_spin")
-        extras.add_force(tides)
-        earth.params["k2"] = settings.earth_love_number_k2
-        earth.params["I"] = (
-            settings.earth_polar_moment_factor * float(earth.m) * float(earth.r) ** 2
-        )
-        earth.params["Omega"] = (
-            settings.normalized_spin_axis()
-            * (2.0 * math.pi / settings.initial_sidereal_day_s)
-        )
-        earth.params["tau"] = physical_lag
-        if settings.evolve_spin:
-            extras.initialize_spin_ode(tides)
-
-    return {
-        "enabled": settings.enabled,
-        "model": "REBOUNDx tides_spin vector constant-time-lag equilibrium tide",
-        "implementation": "compiled C force plus coupled Earth-spin ODE",
-        "structured_body": "earth",
-        "point_mass_perturbers": "all other active bodies",
-        "earth_love_number_k2": settings.earth_love_number_k2,
-        "k2_delta_t_s": k2_lag,
-        "constant_time_lag_s": physical_lag,
-        "reboundx_normalization_factor": 0.5,
-        "calibration_target": "38.2 mm/year circular real-Moon recession at 384,400 km",
-        "initial_sidereal_day_s": settings.initial_sidereal_day_s,
-        "earth_polar_moment_factor": settings.earth_polar_moment_factor,
-        "earth_spin_axis_icrf": list(settings.earth_spin_axis_icrf),
-        "spin_evolved_inside_nbody": bool(settings.enabled and settings.evolve_spin),
-        "omissions": [
-            "frequency-dependent ocean and solid-Earth response",
-            "tides, deformation, and spin evolution inside either moon",
-            "time-varying Earth inertia and atmosphere/ocean angular momentum",
-        ],
-    }
+    return attach_reboundx_rotational_tides(simulation, config)
 
 
 class EnhancedEphemeris(CoupledEphemeris):
@@ -369,7 +283,7 @@ class EnhancedEphemeris(CoupledEphemeris):
         correction_metadata = attach_reboundx_enhanced_forces(
             simulation, dynamics_settings
         )
-        tide_metadata = attach_reboundx_earth_tides(simulation, tide_settings)
+        tide_metadata = attach_reboundx_rotational_tides(simulation, tide_settings)
 
         control_simulation = None
         if tide_settings.enabled and tide_settings.evolve_spin:
@@ -386,12 +300,24 @@ class EnhancedEphemeris(CoupledEphemeris):
                 include_pluto=include_pluto,
             )
             attach_reboundx_enhanced_forces(control_simulation, dynamics_settings)
-            attach_reboundx_earth_tides(control_simulation, tide_settings)
+            attach_reboundx_rotational_tides(control_simulation, tide_settings)
 
-        initial_spin_vector = (
-            tide_settings.normalized_spin_axis()
-            * (2.0 * math.pi / tide_settings.initial_sidereal_day_s)
+        structured_body_configs = tide_settings.resolved_bodies()
+        spin_body_names = tuple(body.name for body in structured_body_configs)
+        if "earth" not in spin_body_names:
+            raise ValueError(
+                "EnhancedEphemeris requires an Earth rotational state for "
+                "the differential orientation model"
+            )
+        initial_spin_vectors = np.asarray(
+            [
+                body.initial_spin_vector_rad_s
+                for body in structured_body_configs
+            ],
+            dtype=float,
         )
+        earth_spin_index = spin_body_names.index("earth")
+        initial_spin_vector = initial_spin_vectors[earth_spin_index]
         cache_path = _trajectory_cache_path(
             context,
             elements,
@@ -411,11 +337,15 @@ class EnhancedEphemeris(CoupledEphemeris):
                     cached_seconds = np.asarray(cached["seconds"], dtype=float)
                     if np.array_equal(cached_seconds, self.seconds):
                         positions = np.asarray(cached["positions"], dtype=float)
+                        velocities = np.asarray(cached["velocities"], dtype=float)
                         full_spin_vectors = np.asarray(
                             cached["full_spin_vectors"], dtype=float
                         )
                         control_spin_vectors = np.asarray(
                             cached["control_spin_vectors"], dtype=float
+                        )
+                        cached_spin_body_names = tuple(
+                            str(name) for name in cached["spin_body_names"]
                         )
                         initial_newtonian_energy = float(
                             cached["initial_newtonian_energy"]
@@ -423,11 +353,22 @@ class EnhancedEphemeris(CoupledEphemeris):
                         final_newtonian_energy = float(
                             cached["final_newtonian_energy"]
                         )
+                        initial_rotational_diagnostic = json.loads(
+                            str(cached["initial_rotational_diagnostic"].item())
+                        )
+                        final_rotational_diagnostic = json.loads(
+                            str(cached["final_rotational_diagnostic"].item())
+                        )
                         cache_hit = (
                             positions.shape
                             == (len(self.seconds), len(PARTICLE_NAMES), 3)
-                            and full_spin_vectors.shape == (len(self.seconds), 3)
-                            and control_spin_vectors.shape == (len(self.seconds), 3)
+                            and velocities.shape
+                            == (len(self.seconds), len(PARTICLE_NAMES), 3)
+                            and cached_spin_body_names == spin_body_names
+                            and full_spin_vectors.shape
+                            == (len(self.seconds), len(spin_body_names), 3)
+                            and control_spin_vectors.shape
+                            == (len(self.seconds), len(spin_body_names), 3)
                         )
             except (KeyError, OSError, ValueError):
                 # A partial or stale cache is never allowed to poison a run;
@@ -435,10 +376,17 @@ class EnhancedEphemeris(CoupledEphemeris):
                 cache_hit = False
         if not cache_hit:
             initial_newtonian_energy = float(simulation.energy())
+            initial_rotational_diagnostic = (
+                rotational_diagnostic_snapshot(simulation).to_dict()
+            )
             positions = np.empty(
                 (len(self.seconds), len(PARTICLE_NAMES), 3), dtype=float
             )
-            full_spin_vectors = np.empty((len(self.seconds), 3), dtype=float)
+            velocities = np.empty_like(positions)
+            full_spin_vectors = np.empty(
+                (len(self.seconds), len(spin_body_names), 3),
+                dtype=float,
+            )
             control_spin_vectors = np.empty_like(full_spin_vectors)
             for index, seconds in enumerate(self.seconds):
                 simulation.integrate(float(seconds), exact_finish_time=1)
@@ -449,30 +397,60 @@ class EnhancedEphemeris(CoupledEphemeris):
                         particle.y,
                         particle.z,
                     )
-                full_spin_vectors[index] = _particle_spin_vector(
-                    simulation.particles["earth"],
-                    fallback=initial_spin_vector,
-                )
+                    velocities[index, body_index] = (
+                        particle.vx,
+                        particle.vy,
+                        particle.vz,
+                    )
+                for spin_index, name in enumerate(spin_body_names):
+                    full_spin_vectors[index, spin_index] = _particle_spin_vector(
+                        simulation.particles[name],
+                        fallback=initial_spin_vectors[spin_index],
+                    )
                 if control_simulation is None:
-                    control_spin_vectors[index] = initial_spin_vector
+                    control_spin_vectors[index] = initial_spin_vectors
                 else:
                     control_simulation.integrate(float(seconds), exact_finish_time=1)
-                    control_spin_vectors[index] = _particle_spin_vector(
-                        control_simulation.particles["earth"],
-                        fallback=initial_spin_vector,
-                    )
+                    for spin_index, name in enumerate(spin_body_names):
+                        control_spin_vectors[index, spin_index] = (
+                            _particle_spin_vector(
+                                control_simulation.particles[name],
+                                fallback=initial_spin_vectors[spin_index],
+                            )
+                        )
             final_newtonian_energy = float(simulation.energy())
+            final_rotational_diagnostic = (
+                rotational_diagnostic_snapshot(simulation).to_dict()
+            )
             if cache_trajectory:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = cache_path.with_suffix(".tmp.npz")
+                temporary = cache_path.with_name(
+                    f".{cache_path.stem}.{os.getpid()}.{uuid.uuid4().hex}.tmp.npz"
+                )
                 np.savez(
                     temporary,
                     seconds=self.seconds,
                     positions=positions,
+                    velocities=velocities,
+                    spin_body_names=np.asarray(spin_body_names),
                     full_spin_vectors=full_spin_vectors,
                     control_spin_vectors=control_spin_vectors,
                     initial_newtonian_energy=initial_newtonian_energy,
                     final_newtonian_energy=final_newtonian_energy,
+                    initial_rotational_diagnostic=np.asarray(
+                        json.dumps(
+                            initial_rotational_diagnostic,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                    ),
+                    final_rotational_diagnostic=np.asarray(
+                        json.dumps(
+                            final_rotational_diagnostic,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                    ),
                 )
                 temporary.replace(cache_path)
 
@@ -480,22 +458,46 @@ class EnhancedEphemeris(CoupledEphemeris):
             name: CubicSpline(self.seconds, positions[:, index, :], axis=0)
             for index, name in enumerate(PARTICLE_NAMES)
         }
-        full_spin_rates = np.linalg.norm(full_spin_vectors, axis=1)
-        control_spin_rates = np.linalg.norm(control_spin_vectors, axis=1)
+        self._velocity_splines = {
+            name: CubicSpline(self.seconds, velocities[:, index, :], axis=0)
+            for index, name in enumerate(PARTICLE_NAMES)
+        }
+        self._spin_splines = {
+            name: CubicSpline(
+                self.seconds,
+                full_spin_vectors[:, index, :],
+                axis=0,
+            )
+            for index, name in enumerate(spin_body_names)
+        }
+        self._control_spin_splines = {
+            name: CubicSpline(
+                self.seconds,
+                control_spin_vectors[:, index, :],
+                axis=0,
+            )
+            for index, name in enumerate(spin_body_names)
+        }
+        all_full_spin_rates = np.linalg.norm(full_spin_vectors, axis=2)
+        all_control_spin_rates = np.linalg.norm(control_spin_vectors, axis=2)
+        full_spin_rates = all_full_spin_rates[:, earth_spin_index]
+        control_spin_rates = all_control_spin_rates[:, earth_spin_index]
+        earth_full_spin_vectors = full_spin_vectors[:, earth_spin_index, :]
+        earth_control_spin_vectors = control_spin_vectors[:, earth_spin_index, :]
         delta_spin_rate = full_spin_rates - control_spin_rates
-        delta_phase = cumulative_trapezoid(
+        delta_phase = _cumulative_trapezoid(
             delta_spin_rate,
             self.seconds,
-            initial=0.0,
         )
         longitude_shift = -np.degrees(delta_phase)
         initial_spin_rate = float(np.linalg.norm(initial_spin_vector))
+        self._initial_earth_spin_rate_rad_s = initial_spin_rate
         full_lod = EARTH_MEAN_SOLAR_DAY_S * initial_spin_rate / full_spin_rates
         control_lod = EARTH_MEAN_SOLAR_DAY_S * initial_spin_rate / control_spin_rates
         delta_lod_ms = (full_lod - control_lod) * 1_000.0
         delta_ut1_s = delta_phase / initial_spin_rate
-        full_spin_axes = full_spin_vectors / full_spin_rates[:, None]
-        control_spin_axes = control_spin_vectors / control_spin_rates[:, None]
+        full_spin_axes = earth_full_spin_vectors / full_spin_rates[:, None]
+        control_spin_axes = earth_control_spin_vectors / control_spin_rates[:, None]
         pole_separation_rad = np.arccos(
             np.clip(np.sum(full_spin_axes * control_spin_axes, axis=1), -1.0, 1.0)
         )
@@ -508,6 +510,47 @@ class EnhancedEphemeris(CoupledEphemeris):
         self._control_spin_axis_spline = CubicSpline(
             self.seconds, control_spin_axes, axis=0
         )
+        rotational_histories = {}
+        mutual_mean_motion = (
+            None
+            if binary_architecture is None
+            else math.sqrt(
+                simulation.G
+                * (
+                    float(simulation.particles["real_moon"].m)
+                    + float(simulation.particles["second_moon"].m)
+                )
+                / binary_architecture.mutual_orbit.semimajor_axis_km**3
+            )
+        )
+        for spin_index, name in enumerate(spin_body_names):
+            rates = all_full_spin_rates[:, spin_index]
+            history = {
+                "initial_spin_vector_rad_s": full_spin_vectors[
+                    0, spin_index
+                ].tolist(),
+                "final_spin_vector_rad_s": full_spin_vectors[
+                    -1, spin_index
+                ].tolist(),
+                "initial_spin_rate_rad_s": float(rates[0]),
+                "final_spin_rate_rad_s": float(rates[-1]),
+                "fractional_spin_rate_change": float(
+                    (rates[-1] - rates[0]) / rates[0]
+                ),
+            }
+            if mutual_mean_motion is not None and name != "earth":
+                history.update(
+                    {
+                        "mutual_mean_motion_rad_s": mutual_mean_motion,
+                        "initial_spin_to_mutual_mean_motion": float(
+                            rates[0] / mutual_mean_motion
+                        ),
+                        "final_spin_to_mutual_mean_motion": float(
+                            rates[-1] / mutual_mean_motion
+                        ),
+                    }
+                )
+            rotational_histories[name] = history
 
         self.metadata = {
             **planetary_metadata,
@@ -530,8 +573,41 @@ class EnhancedEphemeris(CoupledEphemeris):
             ),
             "force_model": {
                 "newtonian": planetary_metadata.get("force_model"),
+                "rotational_tides_and_spin": tide_metadata,
+                # Retained as an alias for readers of the previous audit schema.
                 "earth_tides_and_spin": tide_metadata,
                 "earth_j2_and_first_post_newtonian": correction_metadata,
+            },
+            "rotational_state_histories": rotational_histories,
+            "rotational_conservation_diagnostic": {
+                "initial": initial_rotational_diagnostic,
+                "final": final_rotational_diagnostic,
+                "relative_total_angular_momentum_vector_change": (
+                    relative_vector_change(
+                        initial_rotational_diagnostic[
+                            "total_angular_momentum_kg_km2_s"
+                        ],
+                        final_rotational_diagnostic[
+                            "total_angular_momentum_kg_km2_s"
+                        ],
+                    )
+                ),
+                "mechanical_energy_change_kg_km2_s2": (
+                    final_rotational_diagnostic[
+                        "mechanical_energy_kg_km2_s2"
+                    ]
+                    - initial_rotational_diagnostic[
+                        "mechanical_energy_kg_km2_s2"
+                    ]
+                ),
+                "interpretation": (
+                    "Orbital plus configured spin angular momentum. Strictly "
+                    "conserved for isolated reaction-complete limits; with Earth "
+                    "gravitational_harmonics enabled, its omitted source-spin "
+                    "reaction makes this a bounded diagnostic rather than a "
+                    "conservation claim. Positive-lag CTL tides dissipate the "
+                    "reported mechanical energy."
+                ),
             },
             "newtonian_energy_diagnostic": {
                 "initial": initial_newtonian_energy,
@@ -581,9 +657,9 @@ class EnhancedEphemeris(CoupledEphemeris):
             },
             "omissions": [
                 "asteroids, trans-Neptunian objects, and planetary figure terms other than Earth J2",
-                "lunar and second-moon permanent-figure forces",
+                "reaction-aware lunar and second-moon permanent J2/C22 figures and physical libration",
                 "post-1PN relativity, solar frame dragging, and solar quadrupole",
-                "frequency-dependent ocean/solid-Earth tide response and satellite tides",
+                "frequency-dependent ocean, mantle, and solid-body tidal response",
                 "J2 reaction torque on Earth's spin, free nutation, and atmosphere/ocean angular momentum",
                 "a refitted alternate-planet ephemeris and observational Earth-orientation series",
             ],
@@ -591,7 +667,9 @@ class EnhancedEphemeris(CoupledEphemeris):
                 "DE440s supplies real-body states only at the 2026 epoch; the alternate system then evolves freely.",
                 "Major planets are point masses; Mars through Neptune use system barycentres and system GMs.",
                 "Relativity uses REBOUNDx gr_full first-order post-Newtonian dynamics; higher orders and spin terms are omitted.",
-                "The constant-time-lag tide is calibrated to present lunar recession and is not an ocean model.",
+                "The constant-time-lag Earth tide is calibrated to present lunar recession and is not an ocean model; lunar and giant-moon lags are labeled scenarios.",
+                "REBOUNDx tides_spin applies each structured body's tide to every other active massive body; it has no pair filter.",
+                "The empirical Earth J2 and tides_spin equilibrium quadrupoles may overlap; strict angular-momentum tests disable gravitational_harmonics because it omits the J2 source-spin reaction.",
                 "Earth's tidal spin vector is coupled inside REBOUNDx; its difference from a real-Moon-only control is overlaid on Skyfield's observed orientation.",
                 "Eclipse shadows omit lunar limb topography and atmospheric enlargement of Earth's lunar-eclipse umbra.",
             ],
@@ -604,6 +682,61 @@ class EnhancedEphemeris(CoupledEphemeris):
             self._longitude_offset_spline(self._seconds(tt_jd)),
             dtype=float,
         )
+
+    def velocity(self, name: str, tt_jd: float | np.ndarray) -> np.ndarray:
+        """Return the integrator-sampled inertial velocity in km/s."""
+
+        return np.asarray(
+            self._velocity_splines[name](self._seconds(tt_jd)),
+            dtype=float,
+        )
+
+    def spin_vector_rad_s(
+        self,
+        body: str,
+        tt_jd: float | np.ndarray,
+    ) -> np.ndarray:
+        """Return one modeled body's inertial spin vector in rad/s."""
+
+        if body not in self._spin_splines:
+            raise KeyError(f"no modeled spin history for {body!r}")
+        return np.asarray(
+            self._spin_splines[body](self._seconds(tt_jd)),
+            dtype=float,
+        )
+
+    def earth_rotation_diagnostics(
+        self,
+        tt_jd: float,
+    ) -> dict[str, float]:
+        """Return full-minus-control Earth rotation diagnostics at one epoch."""
+
+        seconds = float(self._seconds(tt_jd))
+        full_vector = np.asarray(self._spin_splines["earth"](seconds), dtype=float)
+        control_vector = np.asarray(
+            self._control_spin_splines["earth"](seconds),
+            dtype=float,
+        )
+        full_rate = float(np.linalg.norm(full_vector))
+        control_rate = float(np.linalg.norm(control_vector))
+        initial_rate = self._initial_earth_spin_rate_rad_s
+        full_axis = full_vector / full_rate
+        control_axis = control_vector / control_rate
+        pole_separation = math.acos(
+            float(np.clip(np.dot(full_axis, control_axis), -1.0, 1.0))
+        )
+        delta_phase = float(self._phase_offset_spline(seconds))
+        return {
+            "delta_mean_solar_lod_ms": (
+                EARTH_MEAN_SOLAR_DAY_S
+                * initial_rate
+                * (1.0 / full_rate - 1.0 / control_rate)
+                * 1_000.0
+            ),
+            "delta_ut1_s": delta_phase / initial_rate,
+            "longitude_shift_deg": float(self._longitude_offset_spline(seconds)),
+            "pole_separation_arcsec": math.degrees(pole_separation) * 3_600.0,
+        }
 
     def rotation_matrix_icrf_to_itrs(self, tt_jd: float) -> np.ndarray:
         """Return Skyfield ITRS with differential spin phase and pole applied."""
@@ -654,11 +787,19 @@ def _trajectory_cache_path(
 
     kernel = Path(context.kernel_path)
     kernel_stat = kernel.stat()
-    tide_payload = asdict(tide_config)
-    tide_payload["satellite_names"] = list(tide_config.satellite_names)
-    tide_payload["earth_spin_axis_icrf"] = list(tide_config.earth_spin_axis_icrf)
+    try:
+        import rebound
+        import reboundx
+
+        numerical_runtime = {
+            "rebound": rebound.__version__,
+            "reboundx": reboundx.__version__,
+        }
+    except ImportError:  # pragma: no cover - production path already requires both
+        numerical_runtime = {"rebound": "unavailable", "reboundx": "unavailable"}
     payload = {
-        "schema": 4,
+        "schema": 6,
+        "force_model_revision": "three-structured-body-tides-spin-v2",
         "elements": elements.to_dict(),
         "binary_architecture": (
             None if binary_architecture is None else binary_architecture.to_dict()
@@ -667,12 +808,14 @@ def _trajectory_cache_path(
         "sample_step_seconds": sample_step_seconds,
         "ias15_epsilon": ias15_epsilon,
         "dynamics": dynamics_config.to_dict(),
-        "tides": tide_payload,
+        "rotational_tides": tide_config.to_dict(),
         "include_pluto": include_pluto,
+        "numerical_runtime": numerical_runtime,
         "kernel": {
             "name": kernel.name,
             "size": kernel_stat.st_size,
             "mtime_ns": kernel_stat.st_mtime_ns,
+            "sha256": _file_sha256(kernel),
         },
         "force_model": (
             "major-planets+gravitational_harmonics+gr_full+"
@@ -691,6 +834,25 @@ def _trajectory_cache_path(
         else context.cache_dir.parent / "trajectories"
     )
     return directory / f"enhanced_{digest}.npz"
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _cumulative_trapezoid(values: np.ndarray, coordinates: np.ndarray) -> np.ndarray:
+    """Integrate sampled scalar values without importing all of scipy.integrate."""
+
+    values = np.asarray(values, dtype=float)
+    coordinates = np.asarray(coordinates, dtype=float)
+    if values.ndim != 1 or coordinates.shape != values.shape:
+        raise ValueError("cumulative trapezoid inputs must be equal-length vectors")
+    increments = 0.5 * (values[1:] + values[:-1]) * np.diff(coordinates)
+    return np.concatenate((np.zeros(1, dtype=float), np.cumsum(increments)))
 
 
 def _particle_spin_vector(particle: Any, *, fallback: np.ndarray) -> np.ndarray:
@@ -745,5 +907,6 @@ __all__ = [
     "NBodyTideConfig",
     "attach_earth_tides",
     "attach_reboundx_earth_tides",
+    "attach_reboundx_rotational_tides",
     "earth_tidal_accelerations",
 ]

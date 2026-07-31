@@ -321,7 +321,25 @@ def build_coupled_simulation(
 
     # Translation to the modeled system's COM improves conditioning without
     # changing any relative state or osculating element.
+    initial_com = simulation.com()
+    initial_com_state = [
+        float(initial_com.x),
+        float(initial_com.y),
+        float(initial_com.z),
+        float(initial_com.vx),
+        float(initial_com.vy),
+        float(initial_com.vz),
+    ]
     simulation.move_to_com()
+    final_com = simulation.com()
+    final_com_state = [
+        float(final_com.x),
+        float(final_com.y),
+        float(final_com.z),
+        float(final_com.vx),
+        float(final_com.vy),
+        float(final_com.vz),
+    ]
     simulation.integrator = "ias15"
     if hasattr(simulation, "ri_ias15"):  # REBOUND 4.x
         simulation.ri_ias15.epsilon = ias15_epsilon
@@ -343,6 +361,16 @@ def build_coupled_simulation(
         "gravitational_constant_km3_kg_s2": gravitational_constant,
         "earth_system_hill_radius_km": float(hill_radius),
         "ephemeris_kernel": str(getattr(context, "kernel_path", "unknown")),
+        "frame_contract": {
+            "ephemeris_states": "DE440 BCRS/ICRF Cartesian states at the epoch",
+            "architecture_states": "Earth-geocentre-relative ICRF Jacobi states",
+            "integrated_states": "modeled four-body centre-of-mass Cartesian frame",
+            "initial_com_state_bcrs_km_km_s": initial_com_state,
+            "applied_translation_km_km_s": [
+                -component for component in initial_com_state
+            ],
+            "post_translation_com_state_km_km_s": final_com_state,
+        },
         "architecture": (
             "hierarchical binary moons"
             if binary_architecture is not None

@@ -35,6 +35,7 @@ from .ephemeris import load_ephemeris, time_iso_utc
 from .eclipse_geometry import minimum_track_distance_km
 from .lunar_eclipse import find_lunar_eclipses
 from .moon_architecture import architecture_from_config, elements_from_config
+from .rotational_dynamics import rotational_tide_config_from_mapping
 
 
 REAL_BLUE = "#24649A"
@@ -754,6 +755,7 @@ def run_eclipse_climate(
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     elements = elements_from_config(config)
     binary_architecture = architecture_from_config(config)
+    rotational_tide_config = rotational_tide_config_from_mapping(config)
     start_datetime = _iso_datetime(start_utc)
     end_datetime = _iso_datetime(end_utc)
     span_years = (end_datetime - start_datetime).total_seconds() / (
@@ -787,6 +789,7 @@ def run_eclipse_climate(
             end_utc,
             sample_step_seconds=trajectory_step_seconds,
             binary_architecture=binary_architecture,
+            tide_config=rotational_tide_config,
         )
         default_output_dir = "outputs/coupled/eclipse_climate_30y_enhanced"
         model_description = (

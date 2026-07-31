@@ -371,7 +371,10 @@ def attach_reboundx_enhanced_forces(
 
     settings = EnhancedDynamicsConfig() if config is None else config
     settings.validate()
-    extras = reboundx.Extras(simulation)
+    extras = getattr(simulation, "_extras_ref", None)
+    if extras is None:
+        extras = reboundx.Extras(simulation)
+        simulation._extras_ref = extras
     attached: list[str] = []
 
     if settings.earth_j2_enabled and settings.earth_j2 != 0.0:
@@ -381,12 +384,14 @@ def attach_reboundx_enhanced_forces(
         earth.params["J2"] = settings.earth_j2
         earth.params["R_eq"] = settings.earth_equatorial_radius_km
         earth.params["Omega"] = rebound.Vec3d(settings.normalized_spin_axis())
+        simulation._gravitational_harmonics_force_ref = harmonics
         attached.append("gravitational_harmonics")
 
     if settings.solar_1pn_enabled:
         relativity = extras.load_force("gr_full")
         relativity.params["c"] = settings.speed_of_light_km_s
         extras.add_force(relativity)
+        simulation._gr_full_force_ref = relativity
         attached.append("gr_full")
 
     return {
@@ -401,7 +406,15 @@ def attach_reboundx_enhanced_forces(
             "j2": settings.earth_j2,
             "equatorial_radius_km": settings.earth_equatorial_radius_km,
             "spin_axis_icrf": list(settings.earth_spin_axis_icrf),
-            "targets": "all other active bodies; Earth spin axis held fixed",
+            "targets": "all other active bodies",
+            "axis_semantics": (
+                "reads the shared REBOUNDx Omega vector; tides_spin may evolve its "
+                "direction when coupled spin evolution is enabled"
+            ),
+            "angular_momentum_limit": (
+                "gravitational_harmonics omits the equal-and-opposite source-spin "
+                "reaction torque; strict orbital-plus-spin conservation requires J2 off"
+            ),
         },
         "first_post_newtonian": {
             "enabled": settings.solar_1pn_enabled,
@@ -414,7 +427,7 @@ def attach_reboundx_enhanced_forces(
             "potential for conservative-only audits; the separately attached tide is dissipative."
         ),
         "remaining_omissions": [
-            "time-dependent terrestrial spin-axis precession, nutation, and polar motion",
+            "Earth J2 source-spin reaction torque, free nutation, and polar motion",
             "lunar and second-moon permanent-figure terms",
             "post-1PN relativity, solar frame dragging, and solar quadrupole",
         ],

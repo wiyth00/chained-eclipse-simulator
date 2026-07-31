@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 
-MODEL_VERSION = "0.1.0"
+MODEL_VERSION = "0.2.0"
 
 # Geometric radii.  The nominal photospheric solar radius is the IAU 2015 value.
 SUN_RADIUS_KM = 695_700.0
@@ -41,4 +41,3 @@ OBLIQUITY_J2000_DEG = 23.439_291_111
 
 SECONDS_PER_DAY = 86_400.0
 JULIAN_YEAR_DAYS = 365.25
-

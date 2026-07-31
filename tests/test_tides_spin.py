@@ -72,6 +72,64 @@ def test_mignard_pair_force_balances_linear_and_angular_momentum() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("position", "velocity", "spin"),
+    [
+        (
+            (40_000.0, 0.0, 0.0),
+            (0.02, 0.70, 0.04),
+            (0.0, 0.0, 1.8e-5),
+        ),
+        (
+            (32_000.0, -18_000.0, 5_000.0),
+            (-0.12, -0.4, 0.2),
+            (2.0e-6, -4.0e-6, 1.0e-5),
+        ),
+    ],
+)
+def test_mignard_tide_dissipates_or_reaches_zero_limit(
+    position,
+    velocity,
+    spin,
+) -> None:
+    position_vector = np.asarray(position)
+    velocity_vector = np.asarray(velocity)
+    spin_vector = np.asarray(spin)
+    effect = mignard_pair_effect(
+        position_vector,
+        velocity_vector,
+        satellite_mass_kg=REAL_MOON_MASS_KG,
+        primary_mass_kg=SECOND_MOON_MASS_KG,
+        primary_radius_km=2_514.0,
+        primary_spin_vector_rad_s=spin_vector,
+        k2_delta_t_s=100.0,
+    )
+    mechanical_power = float(
+        np.dot(effect.force_on_satellite_kg_km_s2, velocity_vector)
+        + np.dot(effect.primary_spin_torque_kg_km2_s2, spin_vector)
+    )
+
+    assert mechanical_power < 0.0
+
+    disabled = mignard_pair_effect(
+        position_vector,
+        velocity_vector,
+        satellite_mass_kg=REAL_MOON_MASS_KG,
+        primary_mass_kg=SECOND_MOON_MASS_KG,
+        primary_radius_km=2_514.0,
+        primary_spin_vector_rad_s=spin_vector,
+        k2_delta_t_s=0.0,
+    )
+    np.testing.assert_array_equal(
+        disabled.force_on_satellite_kg_km_s2,
+        np.zeros(3),
+    )
+    np.testing.assert_array_equal(
+        disabled.primary_spin_torque_kg_km2_s2,
+        np.zeros(3),
+    )
+
+
 def test_sampled_spin_history_produces_differential_ground_track_correction() -> None:
     # Circular synthetic trajectories exercise the sampled force/torque API,
     # independently of the secular da/dt integrator.

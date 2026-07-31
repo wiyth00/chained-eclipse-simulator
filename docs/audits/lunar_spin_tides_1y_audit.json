@@ -1,0 +1,483 @@
+{
+  "schema": 1,
+  "system": "bound-binary-giant",
+  "model_version": "0.2.0",
+  "active_rotational_tide_scenario": "nominal",
+  "start_utc": "2026-07-10T00:00:00Z",
+  "end_utc": "2027-07-10T00:00:00Z",
+  "trajectory_sample_step_seconds": 86400.0,
+  "ias15_epsilon": 1e-10,
+  "force_model": {
+    "newtonian": "Fully coupled Newtonian point-mass Sun/Earth/real Moon/second moon + seven other major planets",
+    "rotational_tides_and_spin": {
+      "enabled": true,
+      "model": "REBOUNDx tides_spin vector constant-time-lag equilibrium tide",
+      "implementation": "one compiled C force plus one coupled vector-spin ODE",
+      "active_scenario": "nominal",
+      "interaction_scope": "all_active_massive_bodies",
+      "interaction_scope_explanation": "Every configured structured source interacts with every other massive active particle; REBOUNDx exposes no source-target pair filter.",
+      "structured_bodies": [
+        {
+          "name": "earth",
+          "radius_km": 6378.137,
+          "polar_moment_factor": 0.3307,
+          "initial_spin_vector_rad_s": [
+            0.0,
+            0.0,
+            7.292115e-05
+          ],
+          "love_number_k2": 0.3,
+          "constant_time_lag_s": 301.97924737636595,
+          "scenario_label": "present_recession_calibrated_ctl",
+          "provenance": "k2 and inertia are standard bulk approximations; tau is resolved by the code from 38.2 mm/year lunar recession. This bounded CTL response is not a global ocean model.",
+          "permanent_figure": {
+            "enabled": false,
+            "j2": 0.00108262668,
+            "c22": 0.0,
+            "backend": "reaction_aware_attitude_backend_required",
+            "scenario_label": "empirical_axisymmetric_value_deferred",
+            "provenance": "Carried for future reaction-aware attitude work; the current gravitational_harmonics J2 remains a separately labeled reaction-incomplete approximation."
+          },
+          "mass_kg": 5.972365262433174e+24,
+          "polar_moment_kg_km2": 8.03467367326382e+31,
+          "mignard_equivalent_k2_delta_t_s": 181.18754842581956,
+          "calibration_target": "38.2 mm/year circular real-Moon recession at 384,400 km"
+        },
+        {
+          "name": "real_moon",
+          "radius_km": 1737.4,
+          "polar_moment_factor": 0.3931,
+          "initial_spin_vector_rad_s": [
+            0.0,
+            -6.988881235096499e-06,
+            1.612001361797091e-05
+          ],
+          "love_number_k2": 0.024,
+          "constant_time_lag_s": 8500.0,
+          "scenario_label": "nominal_lunar_llr_scale_mutual_synchronous",
+          "provenance": "k2 is representative of lunar laser ranging; tau is an order-of-magnitude CTL translation of lunar dissipation, not a frequency-independent material measurement. The 4.139-day spin is a counterfactual synchronous initial state.",
+          "permanent_figure": {
+            "enabled": false,
+            "j2": 0.0002032,
+            "c22": 2.235e-05,
+            "backend": "reaction_aware_attitude_backend_required",
+            "scenario_label": "measured_lunar_coefficients_deferred",
+            "provenance": "Representative unnormalized lunar gravity coefficients, carried only for a future reaction-aware quaternion backend."
+          },
+          "mass_kg": 7.3460313900942145e+22,
+          "polar_moment_kg_km2": 8.716767412435302e+28,
+          "mignard_equivalent_k2_delta_t_s": 408.0,
+          "calibration_target": null
+        },
+        {
+          "name": "second_moon",
+          "radius_km": 2514.0,
+          "polar_moment_factor": 0.36,
+          "initial_spin_vector_rad_s": [
+            0.0,
+            -6.988881235096499e-06,
+            1.612001361797091e-05
+          ],
+          "love_number_k2": 0.1,
+          "constant_time_lag_s": 1000.0,
+          "scenario_label": "nominal_rocky_mutual_synchronous",
+          "provenance": "Explicit intermediate rocky-body sensitivity assumption. The giant moon has no measured Love number, lag, inertia, or spin.",
+          "permanent_figure": {
+            "enabled": false,
+            "j2": 0.0,
+            "c22": 0.0,
+            "backend": "reaction_aware_attitude_backend_required",
+            "scenario_label": "spherical_nominal",
+            "provenance": "Zero permanent figure is the only defensible nominal value without an interior model or measurement."
+          },
+          "mass_kg": 2.225618374301551e+23,
+          "polar_moment_kg_km2": 5.063883964843379e+29,
+          "mignard_equivalent_k2_delta_t_s": 200.0,
+          "calibration_target": null
+        }
+      ],
+      "skipped_massless_structured_bodies": [],
+      "reboundx_normalization_factor": 0.5,
+      "spin_evolved_inside_nbody": true,
+      "force_and_torque_contract": "Each CTL channel applies equal-and-opposite orbital force and the balancing torque to the deformed body's spin.",
+      "conservative_limit": "k2=0 or tau=0 removes that body's dissipative CTL contribution",
+      "omissions": [
+        "frequency-dependent ocean, mantle, and solid-body response",
+        "time-varying Earth inertia and atmosphere/ocean angular momentum",
+        "permanent J2/C22 figures with reaction-aware attitude dynamics"
+      ]
+    },
+    "earth_tides_and_spin": {
+      "enabled": true,
+      "model": "REBOUNDx tides_spin vector constant-time-lag equilibrium tide",
+      "implementation": "one compiled C force plus one coupled vector-spin ODE",
+      "active_scenario": "nominal",
+      "interaction_scope": "all_active_massive_bodies",
+      "interaction_scope_explanation": "Every configured structured source interacts with every other massive active particle; REBOUNDx exposes no source-target pair filter.",
+      "structured_bodies": [
+        {
+          "name": "earth",
+          "radius_km": 6378.137,
+          "polar_moment_factor": 0.3307,
+          "initial_spin_vector_rad_s": [
+            0.0,
+            0.0,
+            7.292115e-05
+          ],
+          "love_number_k2": 0.3,
+          "constant_time_lag_s": 301.97924737636595,
+          "scenario_label": "present_recession_calibrated_ctl",
+          "provenance": "k2 and inertia are standard bulk approximations; tau is resolved by the code from 38.2 mm/year lunar recession. This bounded CTL response is not a global ocean model.",
+          "permanent_figure": {
+            "enabled": false,
+            "j2": 0.00108262668,
+            "c22": 0.0,
+            "backend": "reaction_aware_attitude_backend_required",
+            "scenario_label": "empirical_axisymmetric_value_deferred",
+            "provenance": "Carried for future reaction-aware attitude work; the current gravitational_harmonics J2 remains a separately labeled reaction-incomplete approximation."
+          },
+          "mass_kg": 5.972365262433174e+24,
+          "polar_moment_kg_km2": 8.03467367326382e+31,
+          "mignard_equivalent_k2_delta_t_s": 181.18754842581956,
+          "calibration_target": "38.2 mm/year circular real-Moon recession at 384,400 km"
+        },
+        {
+          "name": "real_moon",
+          "radius_km": 1737.4,
+          "polar_moment_factor": 0.3931,
+          "initial_spin_vector_rad_s": [
+            0.0,
+            -6.988881235096499e-06,
+            1.612001361797091e-05
+          ],
+          "love_number_k2": 0.024,
+          "constant_time_lag_s": 8500.0,
+          "scenario_label": "nominal_lunar_llr_scale_mutual_synchronous",
+          "provenance": "k2 is representative of lunar laser ranging; tau is an order-of-magnitude CTL translation of lunar dissipation, not a frequency-independent material measurement. The 4.139-day spin is a counterfactual synchronous initial state.",
+          "permanent_figure": {
+            "enabled": false,
+            "j2": 0.0002032,
+            "c22": 2.235e-05,
+            "backend": "reaction_aware_attitude_backend_required",
+            "scenario_label": "measured_lunar_coefficients_deferred",
+            "provenance": "Representative unnormalized lunar gravity coefficients, carried only for a future reaction-aware quaternion backend."
+          },
+          "mass_kg": 7.3460313900942145e+22,
+          "polar_moment_kg_km2": 8.716767412435302e+28,
+          "mignard_equivalent_k2_delta_t_s": 408.0,
+          "calibration_target": null
+        },
+        {
+          "name": "second_moon",
+          "radius_km": 2514.0,
+          "polar_moment_factor": 0.36,
+          "initial_spin_vector_rad_s": [
+            0.0,
+            -6.988881235096499e-06,
+            1.612001361797091e-05
+          ],
+          "love_number_k2": 0.1,
+          "constant_time_lag_s": 1000.0,
+          "scenario_label": "nominal_rocky_mutual_synchronous",
+          "provenance": "Explicit intermediate rocky-body sensitivity assumption. The giant moon has no measured Love number, lag, inertia, or spin.",
+          "permanent_figure": {
+            "enabled": false,
+            "j2": 0.0,
+            "c22": 0.0,
+            "backend": "reaction_aware_attitude_backend_required",
+            "scenario_label": "spherical_nominal",
+            "provenance": "Zero permanent figure is the only defensible nominal value without an interior model or measurement."
+          },
+          "mass_kg": 2.225618374301551e+23,
+          "polar_moment_kg_km2": 5.063883964843379e+29,
+          "mignard_equivalent_k2_delta_t_s": 200.0,
+          "calibration_target": null
+        }
+      ],
+      "skipped_massless_structured_bodies": [],
+      "reboundx_normalization_factor": 0.5,
+      "spin_evolved_inside_nbody": true,
+      "force_and_torque_contract": "Each CTL channel applies equal-and-opposite orbital force and the balancing torque to the deformed body's spin.",
+      "conservative_limit": "k2=0 or tau=0 removes that body's dissipative CTL contribution",
+      "omissions": [
+        "frequency-dependent ocean, mantle, and solid-body response",
+        "time-varying Earth inertia and atmosphere/ocean angular momentum",
+        "permanent J2/C22 figures with reaction-aware attitude dynamics"
+      ]
+    },
+    "earth_j2_and_first_post_newtonian": {
+      "gravity": "fully coupled Newtonian point masses plus compiled corrections",
+      "implementation": "REBOUNDx compiled C force modules",
+      "rebound_version": "4.6.0",
+      "reboundx_version": "4.6.2",
+      "attached_effects": [
+        "gravitational_harmonics",
+        "gr_full"
+      ],
+      "earth_j2": {
+        "enabled": true,
+        "effect": "gravitational_harmonics",
+        "j2": 0.00108262668,
+        "equatorial_radius_km": 6378.137,
+        "spin_axis_icrf": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "targets": "all other active bodies",
+        "axis_semantics": "reads the shared REBOUNDx Omega vector; tides_spin may evolve its direction when coupled spin evolution is enabled",
+        "angular_momentum_limit": "gravitational_harmonics omits the equal-and-opposite source-spin reaction torque; strict orbital-plus-spin conservation requires J2 off"
+      },
+      "first_post_newtonian": {
+        "enabled": true,
+        "effect": "gr_full",
+        "scope": "full first-order post-Newtonian interactions among all active bodies",
+        "speed_of_light_km_s": 299792.458
+      },
+      "energy_diagnostic": "Use the REBOUNDx gr_full Hamiltonian plus the gravitational-harmonics potential for conservative-only audits; the separately attached tide is dissipative.",
+      "remaining_omissions": [
+        "Earth J2 source-spin reaction torque, free nutation, and polar motion",
+        "lunar and second-moon permanent-figure terms",
+        "post-1PN relativity, solar frame dragging, and solar quadrupole"
+      ]
+    }
+  },
+  "trajectory": {
+    "mutual_separation_km": {
+      "minimum": 36671.39025431781,
+      "maximum": 43976.31455113761,
+      "final": 36924.82920607181
+    },
+    "mutual_osculating_eccentricity": {
+      "minimum": 0.002682919646974701,
+      "maximum": 0.11476654976640047,
+      "final": 0.10558650913502937
+    },
+    "moon_pair_barycenter_distance_from_earth_km": {
+      "minimum": 468708.6022137825,
+      "maximum": 510230.6102251653,
+      "final": 498577.9172553501
+    }
+  },
+  "checkpoints": {
+    "one_year": {
+      "earth_rotation_vs_real_moon_only_control": {
+        "delta_mean_solar_lod_ms": 0.025948004156553944,
+        "delta_ut1_s": -0.004764822349001783,
+        "longitude_shift_deg": 1.9907781001085304e-05,
+        "pole_separation_arcsec": 3.409246059977253
+      },
+      "spin": {
+        "earth": {
+          "spin_vector_rad_s": [
+            3.6719633403558616e-09,
+            -5.482532768901199e-12,
+            7.292114986586865e-05
+          ],
+          "spin_rate_rad_s": 7.292114995832019e-05
+        },
+        "real_moon": {
+          "spin_vector_rad_s": [
+            -1.9851104394293894e-13,
+            -6.988672163605011e-06,
+            1.6119527979437195e-05
+          ],
+          "spin_rate_rad_s": 1.7569311907135296e-05,
+          "spin_to_initial_mutual_mean_motion": 0.9999699070402791
+        },
+        "second_moon": {
+          "spin_vector_rad_s": [
+            6.534237438491244e-13,
+            -6.988866998520528e-06,
+            1.6119976612327394e-05
+          ],
+          "spin_rate_rad_s": 1.7569801020643116e-05,
+          "spin_to_initial_mutual_mean_motion": 0.9999977452841177
+        }
+      }
+    },
+    "1_years": {
+      "earth_rotation_vs_real_moon_only_control": {
+        "delta_mean_solar_lod_ms": 0.025948004156553944,
+        "delta_ut1_s": -0.004764822349001783,
+        "longitude_shift_deg": 1.9907781001085304e-05,
+        "pole_separation_arcsec": 3.409246059977253
+      },
+      "spin": {
+        "earth": {
+          "spin_vector_rad_s": [
+            3.6719633403558616e-09,
+            -5.482532768901199e-12,
+            7.292114986586865e-05
+          ],
+          "spin_rate_rad_s": 7.292114995832019e-05
+        },
+        "real_moon": {
+          "spin_vector_rad_s": [
+            -1.9851104394293894e-13,
+            -6.988672163605011e-06,
+            1.6119527979437195e-05
+          ],
+          "spin_rate_rad_s": 1.7569311907135296e-05,
+          "spin_to_initial_mutual_mean_motion": 0.9999699070402791
+        },
+        "second_moon": {
+          "spin_vector_rad_s": [
+            6.534237438491244e-13,
+            -6.988866998520528e-06,
+            1.6119976612327394e-05
+          ],
+          "spin_rate_rad_s": 1.7569801020643116e-05,
+          "spin_to_initial_mutual_mean_motion": 0.9999977452841177
+        }
+      }
+    }
+  },
+  "rotational_conservation_diagnostic": {
+    "initial": {
+      "energy_terms": [
+        "gr_full_hamiltonian",
+        "gravitational_harmonics_potential",
+        "tides_spin_energy"
+      ],
+      "mechanical_energy_kg_km2_s2": -1.981764284965894e+29,
+      "orbital_angular_momentum_kg_km2_s": [
+        8.22626263310936e+35,
+        -1.221742461971659e+37,
+        2.88350940101437e+37
+      ],
+      "spin_angular_momentum_kg_km2_s": [
+        0.0,
+        -4.1482928838546926e+24,
+        5.868544573232462e+27
+      ],
+      "time_s": 0.0,
+      "total_angular_momentum_kg_km2_s": [
+        8.22626263310936e+35,
+        -1.2217424619720738e+37,
+        2.8835094016012246e+37
+      ]
+    },
+    "final": {
+      "energy_terms": [
+        "gr_full_hamiltonian",
+        "gravitational_harmonics_potential",
+        "tides_spin_energy"
+      ],
+      "mechanical_energy_kg_km2_s2": -1.9817642849659304e+29,
+      "orbital_angular_momentum_kg_km2_s": [
+        8.226262633581973e+35,
+        -1.2217424620702404e+37,
+        2.883509401243297e+37
+      ],
+      "spin_angular_momentum_kg_km2_s": [
+        2.950305853819271e+23,
+        -4.1487079539591874e+24,
+        5.868544501384234e+27
+      ],
+      "time_s": 31536000.0,
+      "total_angular_momentum_kg_km2_s": [
+        8.226262633584923e+35,
+        -1.2217424620706553e+37,
+        2.8835094018301517e+37
+      ]
+    },
+    "relative_total_angular_momentum_vector_change": 7.957770570309373e-11,
+    "mechanical_energy_change_kg_km2_s2": -3659174697238528.0,
+    "interpretation": "Orbital plus configured spin angular momentum. Strictly conserved for isolated reaction-complete limits; with Earth gravitational_harmonics enabled, its omitted source-spin reaction makes this a bounded diagnostic rather than a conservation claim. Positive-lag CTL tides dissipate the reported mechanical energy."
+  },
+  "newtonian_energy_diagnostic": {
+    "initial": -1.9817664410030063e+29,
+    "final": -1.9817664403669393e+29,
+    "fractional_change": 3.209595922821814e-10,
+    "interpretation": "Not a total conserved-energy error: the diagnostic omits J2/1PN Hamiltonian terms and the tide is dissipative."
+  },
+  "barycentric_initialization": {
+    "four_body_frame": {
+      "ephemeris_states": "DE440 BCRS/ICRF Cartesian states at the epoch",
+      "architecture_states": "Earth-geocentre-relative ICRF Jacobi states",
+      "integrated_states": "modeled four-body centre-of-mass Cartesian frame",
+      "initial_com_state_bcrs_km_km_s": [
+        -263412.68425245007,
+        -737519.922794473,
+        -302561.8186933684,
+        0.01118197590139341,
+        0.0032107375432660875,
+        0.0011433992938133467
+      ],
+      "applied_translation_km_km_s": [
+        263412.68425245007,
+        737519.922794473,
+        302561.8186933684,
+        -0.01118197590139341,
+        -0.0032107375432660875,
+        -0.0011433992938133467
+      ],
+      "post_translation_com_state_km_km_s": [
+        1.0412051340395285e-11,
+        5.219105140857446e-11,
+        -4.1480606949663305e-12,
+        1.7419778876914352e-18,
+        5.7993932156869235e-19,
+        -1.6368166373418051e-19
+      ]
+    },
+    "planetary_recentering": {
+      "pre_translation_com_state_km_km_s": [
+        263290.2422297072,
+        737486.9790680074,
+        302562.29560375906,
+        -0.011178959651370205,
+        -0.0032099414891509203,
+        -0.0011430598633159353
+      ],
+      "applied_translation_km_km_s": [
+        -263290.2422297072,
+        -737486.9790680074,
+        -302562.29560375906,
+        0.011178959651370205,
+        0.0032099414891509203,
+        0.0011430598633159353
+      ],
+      "post_translation_com_state_km_km_s": [
+        -3.7057582154172714e-11,
+        -2.9414455834874595e-10,
+        -2.0265865240563204e-12,
+        1.4258002515363138e-18,
+        3.7963819102933617e-19,
+        5.1768844231273113e-20
+      ]
+    }
+  },
+  "comparison_to_previous_earth_only_10y_audit": null,
+  "validation_scope": {
+    "full_horizon_audit_years": 1,
+    "convergence_horizon_days": 365,
+    "endpoint_status": "supported by full-horizon convergence comparisons",
+    "strongest_full_horizon_check": "This audit's convergence comparisons cover its full horizon."
+  },
+  "convergence": {
+    "duration_days": 365,
+    "ias15_tolerance": {
+      "mutual_relative_position_difference_km": 5.3448650299816756e-05,
+      "earth_spin_vector_difference_rad_s": 2.449487521001946e-13,
+      "real_moon_spin_vector_difference_rad_s": 1.286660227189668e-11,
+      "second_moon_spin_vector_difference_rad_s": 7.532993680827085e-13,
+      "longitude_shift_difference_deg": 1.7285525767122732e-09
+    },
+    "output_cadence": {
+      "mutual_relative_position_difference_km": 0.00010683304978749235,
+      "earth_spin_vector_difference_rad_s": 3.5177454068901387e-13,
+      "real_moon_spin_vector_difference_rad_s": 1.7026263434742797e-11,
+      "second_moon_spin_vector_difference_rad_s": 9.97736091018205e-13,
+      "longitude_shift_difference_deg": 5.448266874273893e-10
+    }
+  },
+  "interpretation": [
+    "Positive-lag CTL tides are dissipative; mechanical energy should decrease.",
+    "Production angular momentum is a bounded diagnostic because Earth J2 lacks its source-spin reaction.",
+    "Strict isolated J2-off conservation is covered by test_rotational_conservation.py.",
+    "Giant-moon Love number, time lag, inertia, spin, J2, and C22 are sensitivity assumptions.",
+    "Permanent figures and physical libration remain disabled pending a reaction-aware attitude backend."
+  ]
+}

@@ -108,3 +108,47 @@ and detailed eclipse optics remain outside the current model.
 - Include every new state and parameter in cache identity and metadata.
 - Run equation-level tests before one-year and ten-year integrations.
 - Compare new results numerically against the audit above.
+
+## Lunar spin-tide phase implemented on the child branch
+
+The next phase establishes one extensible rotational/tidal architecture without
+changing the Jacobi bound-binary orbit model:
+
+- Earth, the real Moon, and the giant moon have explicit inertial spin vectors,
+  axisymmetric polar moments, Love numbers, and constant time lags.
+- A single REBOUNDx `tides_spin` instance supplies all Earth–Moon and Moon–Moon
+  channels, including equal-and-opposite orbital reactions and spin torque on
+  each deformed source. REBOUNDx has no pair filter, so each structured source
+  also responds to every other active massive particle; this is explicit in
+  metadata rather than hidden behind the legacy satellite list.
+- Active tides require the coupled spin ODE. A configuration that leaves the
+  orbital tide active while disabling spin evolution is rejected because it
+  would discard the equal-and-opposite reaction torque; disabling the entire
+  tide remains backward compatible.
+- `config/bound_binary_giant.yaml` exposes low, nominal, and high material/spin
+  scenarios. Giant-moon parameters are labeled assumptions, not measurements.
+- Spin histories, mutual synchronization ratios, full REBOUNDx mechanical
+  energy, and orbital-plus-spin angular momentum are cached and serialized.
+- Both four-body initialization and later planetary expansion record their
+  uniform center-of-mass translations, while all DE440 and Jacobi relative
+  states remain invariant.
+- Cache identity covers every rotational parameter and initial state, numerical
+  library versions, the force-model revision, and the DE440s kernel SHA-256.
+
+Permanent J2/C22 values now have a stable configuration interface but remain
+disabled. Enabling them fails fast because physical libration requires an
+attitude state and REBOUNDx `gravitational_harmonics` does not return the
+source-spin reaction torque. For the same reason, strict angular-momentum
+validation is performed with Earth J2 off. The empirical J2 and the
+`tides_spin` equilibrium quadrupole may also overlap and are retained only as a
+labeled bounded approximation in the production enhanced stack.
+
+The Earth constant-time-lag response is still explicitly calibrated and
+bounded; it is not presented as a global ocean model. A frequency-dependent
+response remains the recommended interface-level upgrade after a
+reaction-aware quaternion/permanent-figure backend.
+
+The ten-year audit is a production endpoint run, not a full-horizon convergence
+demonstration. The strongest full-horizon convergence evidence is the separate
+one-year audit; the ten-year file carries 30-day tolerance/cadence checks and
+labels the decade endpoint accordingly.

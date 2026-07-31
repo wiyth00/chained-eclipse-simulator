@@ -46,8 +46,15 @@ def test_major_planet_states_and_masses_match_de440() -> None:
     assert "pluto" not in metadata["planetary_perturbers"]["bodies"]
 
     simulated_sun = _particle_state(simulation.particles["sun"])
+    simulated_earth = _particle_state(simulation.particles["earth"])
     de440_sun = np.concatenate(
         (context.sun.at(epoch).position.km, context.sun.at(epoch).velocity.km_per_s)
+    )
+    de440_earth = np.concatenate(
+        (
+            context.earth.at(epoch).position.km,
+            context.earth.at(epoch).velocity.km_per_s,
+        )
     )
     for name in DEFAULT_MAJOR_PLANETS:
         spec = PLANETARY_POINT_MASSES[name]
@@ -57,9 +64,33 @@ def test_major_planet_states_and_masses_match_de440() -> None:
         de440_relative = de440_state - de440_sun
         assert simulated_relative[:3] == pytest.approx(de440_relative[:3], abs=2.0e-5)
         assert simulated_relative[3:] == pytest.approx(de440_relative[3:], abs=2.0e-11)
+        simulated_earth_relative = (
+            _particle_state(simulation.particles[name]) - simulated_earth
+        )
+        de440_earth_relative = de440_state - de440_earth
+        assert simulated_earth_relative[:3] == pytest.approx(
+            de440_earth_relative[:3],
+            abs=2.0e-5,
+        )
+        assert simulated_earth_relative[3:] == pytest.approx(
+            de440_earth_relative[3:],
+            abs=2.0e-11,
+        )
         assert simulation.G * simulation.particles[name].m == pytest.approx(
             spec.gm_km3_s2, rel=2.0e-15
         )
+
+    com = simulation.com()
+    assert (com.x, com.y, com.z) == pytest.approx((0.0, 0.0, 0.0), abs=1.0e-8)
+    assert (com.vx, com.vy, com.vz) == pytest.approx(
+        (0.0, 0.0, 0.0),
+        abs=1.0e-14,
+    )
+    recentering = metadata["planetary_perturbers"]["com_recentering"]
+    assert recentering["post_translation_com_state_km_km_s"] == pytest.approx(
+        [0.0] * 6,
+        abs=1.0e-8,
+    )
 
 
 def test_planetary_system_integrates_cleanly_for_thirty_days() -> None:

@@ -48,6 +48,162 @@ binary_moons:
     argument_periapsis_deg: 0.0
     mean_anomaly_deg: 30.0
 
+rotational_tides:
+  enabled: true
+  evolve_spin: true
+  interaction_scope: all_active_massive_bodies
+  active_scenario: nominal
+  scenarios:
+    low:
+      description: >-
+        Weak-dissipation sensitivity case. The real-Moon range is tied to
+        lunar-laser-ranging order-of-magnitude constraints; every giant-moon
+        value is an explicit low-response scenario, not a measurement.
+      bodies:
+        earth: &earth_rotation_tide
+          radius_km: 6378.137
+          polar_moment_factor: 0.3307
+          initial_spin_vector_rad_s: [0.0, 0.0, 7.2921150e-05]
+          love_number_k2: 0.3
+          constant_time_lag_s: null
+          scenario_label: present_recession_calibrated_ctl
+          provenance: >-
+            k2 and inertia are standard bulk approximations; tau is resolved
+            by the code from 38.2 mm/year lunar recession. This bounded CTL
+            response is not a global ocean model.
+          permanent_figure:
+            enabled: false
+            j2: 0.00108262668
+            c22: 0.0
+            scenario_label: empirical_axisymmetric_value_deferred
+            provenance: >-
+              Carried for future reaction-aware attitude work; the current
+              gravitational_harmonics J2 remains a separately labeled
+              reaction-incomplete approximation.
+        real_moon:
+          radius_km: 1737.4
+          polar_moment_factor: 0.3931
+          initial_spin_vector_rad_s: [0.0, -6.988881235096499e-06, 1.612001361797091e-05]
+          love_number_k2: 0.020
+          constant_time_lag_s: 4250.0
+          scenario_label: low_lunar_dissipation_mutual_synchronous
+          provenance: >-
+            Love number and lag bracket lunar-laser-ranging estimates; the
+            counterfactual 4.139-day mutual synchronous spin is an explicit
+            initial-state assumption.
+          permanent_figure:
+            enabled: false
+            j2: 0.0002032
+            c22: 0.00002235
+            scenario_label: measured_lunar_coefficients_deferred
+            provenance: >-
+              Representative unnormalized lunar gravity coefficients, carried
+              only for a future reaction-aware quaternion backend.
+        second_moon:
+          radius_km: 2514.0
+          polar_moment_factor: 0.33
+          initial_spin_vector_rad_s: [0.0, -2.892438962466075e-06, 6.669591937200562e-06]
+          love_number_k2: 0.01
+          constant_time_lag_s: 100.0
+          scenario_label: low_response_slow_spin
+          provenance: >-
+            Deliberately broad weak-response giant-moon scenario; no measured
+            material or spin constraint exists.
+          permanent_figure:
+            enabled: false
+            j2: 0.0
+            c22: 0.0
+            scenario_label: spherical
+            provenance: unconstrained giant-moon baseline
+    nominal:
+      description: >-
+        Nominal counterfactual case. Both moons begin mutually synchronous;
+        the real Moon uses an LLR-scale CTL response and the giant uses a
+        deliberately labeled intermediate rocky-body sensitivity assumption.
+      bodies:
+        earth: *earth_rotation_tide
+        real_moon:
+          radius_km: 1737.4
+          polar_moment_factor: 0.3931
+          initial_spin_vector_rad_s: [0.0, -6.988881235096499e-06, 1.612001361797091e-05]
+          love_number_k2: 0.024
+          constant_time_lag_s: 8500.0
+          scenario_label: nominal_lunar_llr_scale_mutual_synchronous
+          provenance: >-
+            k2 is representative of lunar laser ranging; tau is an
+            order-of-magnitude CTL translation of lunar dissipation, not a
+            frequency-independent material measurement. The 4.139-day spin is
+            a counterfactual synchronous initial state.
+          permanent_figure:
+            enabled: false
+            j2: 0.0002032
+            c22: 0.00002235
+            scenario_label: measured_lunar_coefficients_deferred
+            provenance: >-
+              Representative unnormalized lunar gravity coefficients, carried
+              only for a future reaction-aware quaternion backend.
+        second_moon:
+          radius_km: 2514.0
+          polar_moment_factor: 0.36
+          initial_spin_vector_rad_s: [0.0, -6.988881235096499e-06, 1.612001361797091e-05]
+          love_number_k2: 0.10
+          constant_time_lag_s: 1000.0
+          scenario_label: nominal_rocky_mutual_synchronous
+          provenance: >-
+            Explicit intermediate rocky-body sensitivity assumption. The
+            giant moon has no measured Love number, lag, inertia, or spin.
+          permanent_figure:
+            enabled: false
+            j2: 0.0
+            c22: 0.0
+            scenario_label: spherical_nominal
+            provenance: >-
+              Zero permanent figure is the only defensible nominal value
+              without an interior model or measurement.
+    high:
+      description: >-
+        Strong-dissipation and rapid-spin sensitivity case. It is intended to
+        expose numerical stiffness and response scaling, not to assert a
+        likely giant-moon interior.
+      bodies:
+        earth: *earth_rotation_tide
+        real_moon:
+          radius_km: 1737.4
+          polar_moment_factor: 0.3931
+          initial_spin_vector_rad_s: [0.0, -6.988881235096499e-06, 1.612001361797091e-05]
+          love_number_k2: 0.030
+          constant_time_lag_s: 17000.0
+          scenario_label: high_lunar_dissipation_mutual_synchronous
+          provenance: >-
+            Upper sensitivity bracket around lunar-laser-ranging-scale
+            dissipation; not a claim of frequency-independent behavior.
+          permanent_figure:
+            enabled: false
+            j2: 0.0002032
+            c22: 0.00002235
+            scenario_label: measured_lunar_coefficients_deferred
+            provenance: >-
+              Representative unnormalized lunar gravity coefficients, carried
+              only for a future reaction-aware quaternion backend.
+        second_moon:
+          radius_km: 2514.0
+          polar_moment_factor: 0.40
+          initial_spin_vector_rad_s: [0.0, -2.893106004105163e-05, 6.671130894738107e-05]
+          love_number_k2: 0.30
+          constant_time_lag_s: 10000.0
+          scenario_label: high_response_one_day_spin
+          provenance: >-
+            Deliberately aggressive giant-moon sensitivity assumption used to
+            bound heating, synchronization, and numerical stiffness.
+          permanent_figure:
+            enabled: false
+            j2: 0.0002
+            c22: 0.00002
+            scenario_label: moon_like_dimensionless_figure_deferred
+            provenance: >-
+              Unmeasured Moon-like dimensionless sensitivity values; disabled
+              until a reaction-aware rigid-body attitude backend exists.
+
 geometry:
   earth_model: WGS84
   minimum_solar_altitude_deg: 0.0

@@ -137,9 +137,19 @@ def add_planetary_perturbers(
         targets[name] = spec.ephemeris_target
         representations[name] = spec.representation
 
-    # New active masses change the full system's barycentre.  This translation
-    # leaves all relative positions and velocities invariant.
+    # New active masses change the full system's barycentre.  Record and apply
+    # the one uniform translation; all relative states remain invariant.
+    expanded_com = simulation.com()
+    expanded_com_state = [
+        float(expanded_com.x),
+        float(expanded_com.y),
+        float(expanded_com.z),
+        float(expanded_com.vx),
+        float(expanded_com.vy),
+        float(expanded_com.vz),
+    ]
     simulation.move_to_com()
+    final_com = simulation.com()
 
     return {
         "active": True,
@@ -155,6 +165,20 @@ def add_planetary_perturbers(
         },
         "masses_kg": masses_kg,
         "initial_states_bcrs_km_km_s": initial_states_bcrs,
+        "com_recentering": {
+            "pre_translation_com_state_km_km_s": expanded_com_state,
+            "applied_translation_km_km_s": [
+                -component for component in expanded_com_state
+            ],
+            "post_translation_com_state_km_km_s": [
+                float(final_com.x),
+                float(final_com.y),
+                float(final_com.z),
+                float(final_com.vx),
+                float(final_com.vy),
+                float(final_com.vz),
+            ],
+        },
         "particle_radius_km": 0.0,
         "notes": [
             "All added bodies gravitationally perturb every other active particle.",
